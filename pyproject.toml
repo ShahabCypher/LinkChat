@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "linkchat"
+version = "0.1.0"
+description = "Cross-platform offline BLE mesh messenger"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "cryptography>=42.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+]
+windows = [
+    "customtkinter>=5.2",
+    "bleak>=0.22",
+    "bless>=0.2.6",
+]
+
+[tool.setuptools]
+package-dir = { "linkchat_core" = "core/linkchat_core", "linkchat_sim" = "simulator/linkchat_sim" }
+packages = ["linkchat_core", "linkchat_sim"]
+
+[tool.pytest.ini_options]
+pythonpath = ["core", "windows", "simulator"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
