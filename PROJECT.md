@@ -128,10 +128,12 @@ All LinkChat nodes expose and scan for the same custom 128-bit Service UUID:
 | **TX Characteristic** | `7b4e1002-8f2a-4c3b-9d1e-4c696e6b4368` | `Notify` (Peripheral -> Central) |
 
 > [!NOTE]
-> The trailing bytes `4c696e6b4368` spell ASCII `"LinkCh"`. Advertisement payload includes the 128-bit Service UUID and short local name (`LC-<4hex>`) so scanners filter LinkChat devices immediately without connecting to unrelated BLE peripherals.
+> The trailing bytes `4c696e6b4368` spell ASCII `"LinkCh"`. Advertisement payload includes the 128-bit Service UUID and short local name (`LC-<4hex>`, using the first 4 hex chars of `node_id`) so scanners filter LinkChat devices immediately without connecting to unrelated BLE peripherals.
 
 ### MTU Chunking & Reassembly (`ChunkAssembler`)
-BLE ATT payloads default to 20 bytes (`MTU 23 - 3`) and negotiate up to 247–512 bytes when supported. Every outbound packet is split into chunks sized to `max(20, link_mtu - 3)`:
+`ChunkAssembler` lives inside **`linkchat_core`** so neither Windows nor Android has to reimplement fragmentation in platform code. Platform transports only send/receive raw BLE characteristic byte chunks and report the link's negotiated ATT MTU on `on_link_up`.
+
+BLE ATT payloads default to 20 bytes (`MTU 23 - 3`) and negotiate up to 247–512 bytes when supported. `ChunkAssembler` splits outbound packets into chunks sized to `max(20, link_mtu - 3)`:
 
 ```text
 +------------+--------------+----------+-----------+-------------------------+
@@ -174,19 +176,20 @@ Offset  Size  Field       Description
 | `0x01` | `HELLO` | Broadcast (`ttl=1`) | `caps (1B)` + `nick_len (1B)` + `nickname (UTF-8)` + `ed25519_pub (32B)` + `x25519_pub (32B)` |
 | `0x02` | `CHAT_PUBLIC` | Broadcast (`ttl=5`) | `timestamp_ms (8B)` + `text_len (2B)` + `text (UTF-8)` + `ed25519_sig (64B)` |
 | `0x03` | `CHAT_DM` | `target_id` (`ttl=5`) | `timestamp_ms (8B)` + `nonce (12B)` + `ciphertext_and_tag (var)` |
-| `0x04` | `DM_ACK` | `target_id` (`ttl=5`) | `acked_msg_id (8B)` + `nonce (12B)` + `ciphertext_and_tag (var)` |
+| `0x04` | `DM_ACK` | `target_id` (`ttl=5`) | `acked_msg_id (8B)` + `nonce (12B)` + `ciphertext_and_tag (var)` (encrypts `b"ACK"` with AAD including `acked_msg_id`) |
 | `0x05` | `SYNC_DIGEST` | Direct peer (`ttl=1`) | `count (2B)` + `N * msg_id (8B each)` of cached public messages |
 | `0x06` | `SYNC_REQ` | Direct peer (`ttl=1`) | `count (2B)` + `N * msg_id (8B each)` missing from local store |
 
 ### Routing, Deduplication & Store-and-Forward
-1. **Deduplication**: Every node maintains an in-memory LRU/TTL `seen_cache` keyed by `(origin_id, msg_id)` holding up to 2,000 entries. Duplicates are dropped immediately.
-2. **Loop-Free Multi-Hop Forwarding**:
+1. **Link-Up Handshake**: Immediately when `on_link_up(handle, mtu, rssi)` fires, the node sends `HELLO` on that link. Upon receiving a peer's `HELLO`, it sends `SYNC_DIGEST` containing its cached public `msg_id`s, replies to the peer's `SYNC_DIGEST` with `SYNC_REQ` for any unseen `msg_id`s, and flushes any queued outbound DMs whose `target_id` is now reachable.
+2. **Deduplication**: Every node maintains an in-memory LRU/TTL `seen_cache` keyed by `(origin_id, msg_id)` holding up to 2,000 entries. Duplicates are dropped immediately.
+3. **Loop-Free Multi-Hop Forwarding**:
    - Validate header version, payload bounds, and (for `CHAT_PUBLIC`) the `Ed25519` signature before relaying so malformed or forged public packets cannot flood the mesh.
    - If `ttl > 1` and the packet is not a `CHAT_DM` / `DM_ACK` addressed to self: construct a forwarded copy with `ttl - 1` and `hop + 1`, wait a random jitter (`15–60 ms`), and send to all connected neighbors **except** the neighbor that delivered it.
-3. **Peer Table Updates**: Direct `HELLO` packets record `hop_count = 1` and live RSSI; relayed `CHAT_PUBLIC` / `HELLO` packets update reachability (`hop_count = packet.hop + 1` or minimum observed hop count) with a configurable stale timeout (e.g., 90 seconds).
-4. **Store-and-Forward Reconciliation**:
+4. **Peer Table Updates**: Direct `HELLO` packets record `hop_count = 1` and live RSSI; relayed `CHAT_PUBLIC` / `HELLO` packets update reachability (`hop_count = packet.hop + 1` or minimum observed hop count) with a configurable stale timeout (e.g., 90 seconds).
+5. **Store-and-Forward Reconciliation**:
    - Each node caches the last **100 public messages** (max age 2 hours) and any **undelivered outbound DMs** (max age 24 hours).
-   - When a direct link comes up and `HELLO` completes, peers exchange `SYNC_DIGEST` -> `SYNC_REQ` and replay missing cached `CHAT_PUBLIC` packets (preserving original `msg_id` and signature) and flush queued DMs if the recipient becomes reachable.
+   - Missing cached `CHAT_PUBLIC` packets requested via `SYNC_REQ` are replayed directly over the requesting link while preserving the original `msg_id` and `Ed25519` signature.
 
 ---
 
@@ -218,32 +221,37 @@ All cryptographic operations use standard primitives from Python's `cryptography
 
 ## 7. Core Module Interfaces
 
-`LinkChatNode` exposes a single clean async API consumed identically by the Windows GUI, Android Chaquopy bridge, and Simulator:
+`LinkChatNode` exposes a single clean async API consumed identically by the Windows GUI, Android Chaquopy bridge, and Simulator. It requires `data_dir: str | Path` (used for SQLite identity/peer/history persistence) and a `TransportAdapter` that exchanges raw BLE chunks (chunking/reassembly happens inside `LinkChatNode` via `ChunkAssembler`):
 
 ```python
 class TransportAdapter(Protocol):
     async def start(self) -> None: ...
     async def stop(self) -> None: ...
-    async def send_frame(self, peer_handle: str, frame: bytes) -> None: ...
-    async def broadcast_frame(self, frame: bytes, exclude: str | None = None) -> None: ...
+    async def send_chunk(self, peer_handle: str, chunk: bytes) -> None: ...
     def set_callbacks(
         self,
         on_link_up: Callable[[str, int, int], Awaitable[None]],      # handle, mtu, rssi
         on_link_down: Callable[[str], Awaitable[None]],
-        on_frame: Callable[[str, bytes], Awaitable[None]],
+        on_chunk: Callable[[str, bytes], Awaitable[None]],
     ) -> None: ...
 ```
 
-Key `LinkChatNode` methods and events:
+Key `LinkChatNode` constructor & methods:
+- **Init**: `LinkChatNode(data_dir: str | Path, transport: TransportAdapter, nickname: str | None = None)`
 - **Commands**: `start()`, `stop()`, `set_nickname(name)`, `send_public(text)`, `send_dm(target_id, text)`, `verify_peer(node_id, verified=True)`, `get_peers()`, `get_safety_fingerprint(node_id)`, `get_history(channel_or_peer)`.
 - **UI Event Callbacks**: `on_peer_updated(PeerInfo)`, `on_public_message(MessageRecord)`, `on_dm_received(MessageRecord)`, `on_dm_status_changed(msg_id, status)`, `on_mesh_log(LogEntry)`.
+
+### Dependencies & Packaging (`pyproject.toml`)
+- **Core (`linkchat_core`)**: `cryptography>=42.0` (only external dependency; everything else uses stdlib `asyncio`, `sqlite3`, `struct`, `hashlib`).
+- **Tests & Simulator**: `pytest>=8.0`, `pytest-asyncio>=0.23` (`pythonpath = ["core", "windows", "simulator"]`).
+- **Windows (`linkchat_win`)**: `customtkinter>=5.2`, `bleak>=0.22`, `bless>=0.2.6`.
 
 ---
 
 ## 8. Platform Implementation Details
 
 ### Windows Desktop App (`linkchat_win`)
-- **UI Framework**: `CustomTkinter` running on the main thread, polling a `queue.Queue` every 50 ms driven by a dedicated background `asyncio` daemon thread hosting `LinkChatNode` + `WindowsBleTransport`.
+- **Storage & UI Framework**: Defaults `data_dir` to `~/.linkchat` (or `%LOCALAPPDATA%/LinkChat`). `CustomTkinter` runs on the main thread, polling a `queue.Queue` every 50 ms driven by a dedicated background `asyncio` daemon thread hosting `LinkChatNode` + `WindowsBleTransport`.
 - **Views**:
   - **Setup / Profile Bar**: Edit local nickname, view own `node_id` & BLE mode badge (`Dual-Role` vs `Central-Only`).
   - **Peer Radar Sidebar**: Live list of peers showing nickname, `Direct` or `N hops` pill, RSSI bar, and Verified (`✓`) / Key-Warning (`!`) icon. Clicking a peer opens their Encrypted DM tab or Safety Fingerprint modal.
@@ -251,7 +259,7 @@ Key `LinkChatNode` methods and events:
   - **Mesh Inspector Drawer** (collapsible): Live trace of `HELLO`, relayed packets (`ttl`, `hop`), and `SYNC` events for university presentation demos.
 
 ### Android App (`LinkChatAndroid`)
-- **Gradle & Chaquopy**: `com.chaquo.python` configured for Python `3.13` with `pip { install "cryptography" }` and `arm64-v8a` / `x86_64` ABI filters.
+- **Gradle & Chaquopy**: `minSdk = 26`, `targetSdk = 35`, `compileSdk = 35`, `com.chaquo.python` configured for Python `3.13` with `pip { install "cryptography" }` and `arm64-v8a` / `x86_64` ABI filters. Point Chaquopy's Python `srcDir` directly at `../../core` (so `linkchat_core` is never duplicated) plus `src/main/python` for `bridge.py`. Pass `context.filesDir.absolutePath` as `data_dir` to `LinkChatNode`.
 - **Kotlin BLE Layer (`AndroidBleTransport`)**:
   - Runs inside an Android **Foreground Service** (`connectedDevice` type) so BLE scanning/advertising stays alive during chats.
   - Requests runtime permissions cleanly for Android 12+ (`BLUETOOTH_SCAN`, `BLUETOOTH_ADVERTISE`, `BLUETOOTH_CONNECT`, `POST_NOTIFICATIONS`) and Android 10–11 (`ACCESS_FINE_LOCATION`).
@@ -303,3 +311,15 @@ Key `LinkChatNode` methods and events:
 1. **Direct Windows <-> Android**: Exchange `#public` messages, initiate E2EE DM, verify matching 6-emoji fingerprint on both screens, confirm `Delivered` receipt via `DM_ACK`.
 2. **Windows Central-Only Fallback**: Simulate/test a Windows adapter without Peripheral mode connecting to an Android Peripheral and participating normally in group chat and DMs.
 3. **3-Node Multi-Hop Relay**: Route a message from `Phone A` through `Windows Laptop` to `Phone B` with direct `A <-> B` link disabled, verifying `hop = 2` on `Phone B` and encrypted DM delivery.
+
+---
+
+## 11. Running Each Phase in a Fresh Session
+
+Each phase is self-contained and can be started in a new conversation by referencing `PROJECT.md` and `AGENTS.md`:
+
+- **Phase 1**: *"Implement Phase 1 from PROJECT.md: `pyproject.toml`, `core/linkchat_core`, `simulator/linkchat_sim`, and `tests/`. Run `pytest` and verify the 5-node demo."*
+- **Phase 2**: *"Implement Phase 2 from PROJECT.md: `windows/linkchat_win` (`WindowsBleTransport` with `bleak` + `bless` Central-only fallback, and `CustomTkinter` UI). Keep `linkchat_core` tests green."*
+- **Phase 3**: *"Implement Phase 3 from PROJECT.md: `android/LinkChatAndroid` (Kotlin Jetpack Compose + `AndroidBleTransport` + Foreground Service + Chaquopy `bridge.py` pointing to `core/linkchat_core`)."*
+- **Phase 4**: *"Run Phase 4 from PROJECT.md: cross-platform Windows <-> Android interop fixes, 3-node multi-hop verification, and final `README.md` setup/demo instructions."*
+
