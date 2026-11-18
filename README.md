@@ -17,4 +17,4 @@ Offline, decentralized Bluetooth Low Energy (BLE) mesh messenger for **Windows**
 - **Android App**: Kotlin (`Jetpack Compose` + native Android BLE GATT) + `Chaquopy` embedding `linkchat_core`
 
 ## Project Status & Architecture
-Currently in the planning/setup phase. See [PROJECT.md](PROJECT.md) for the complete architecture, binary wire protocol, BLE GATT specification, cryptographic design, and phased implementation roadmap.
+Phase 1 complete (`linkchat_core`, `linkchat_sim`, and `tests/`). See [PROJECT.md](PROJECT.md) for the complete architecture, binary wire protocol, BLE GATT specification, cryptographic design, and phased implementation roadmap.
