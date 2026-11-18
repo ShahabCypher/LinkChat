@@ -1,0 +1,31 @@
+# Folders
+__pycache__/
+.venv/
+.claude/
+.agents/
+.opencode/
+.impeccable/
+test/
+ignore/
+downloads/
+legacy/
+files/
+ss/
+
+# Env files
+.env
+.env.local
+
+# text files
+save.txt
+errors.txt
+sample.py
+
+# other files
+*.zip
+*.rar
+*.pdf
+*.docx
+*.session
+*.session-journal
+*.log
