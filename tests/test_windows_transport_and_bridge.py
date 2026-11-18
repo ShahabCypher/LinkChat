@@ -1,0 +1,278 @@
+"""Tests for WindowsBleTransport (tie-breaker, Central-only fallback, bleak flow) and BackendBridge."""
+
+from __future__ import annotations
+
+import asyncio
+import queue
+import time
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+from linkchat_core import DMStatus
+from linkchat_core.protocol import RX_CHAR_UUID, SERVICE_UUID, TX_CHAR_UUID
+from linkchat_sim.virtual_transport import NetworkHub, VirtualTransport
+from linkchat_win.app import (
+    BackendBridge,
+    DmReceivedEvent,
+    DmStatusChangedEvent,
+    FingerprintReadyEvent,
+    HistoryLoadedEvent,
+    NodeReadyEvent,
+    PeerUpdatedEvent,
+    PublicMessageEvent,
+)
+from linkchat_win.ble_transport import WindowsBleTransport, parse_linkchat_tag
+
+
+@dataclass
+class _FakeDevice:
+    address: str
+    name: str | None = None
+
+
+@dataclass
+class _FakeAdv:
+    local_name: str | None = None
+    service_uuids: list[str] | None = None
+    rssi: int | None = -62
+
+
+class _FakeScanner:
+    def __init__(self, detection_callback: Any, service_uuids: list[str] | None = None) -> None:
+        self.detection_callback = detection_callback
+        self.service_uuids = service_uuids
+        self.started = False
+        self.stopped = False
+
+    async def start(self) -> None:
+        self.started = True
+
+    async def stop(self) -> None:
+        self.stopped = True
+
+
+class _FakeClient:
+    def __init__(self, device: _FakeDevice, disconnected_callback: Any = None) -> None:
+        self.device = device
+        self.disconnected_callback = disconnected_callback
+        self.mtu_size = 247
+        self.connected = False
+        self.notify_cb: Any = None
+        self.writes: list[tuple[str, bytes, bool]] = []
+        self.fail_wo_response = False
+
+    async def connect(self) -> None:
+        self.connected = True
+
+    async def disconnect(self) -> None:
+        self.connected = False
+
+    async def start_notify(self, uuid: str, cb: Any) -> None:
+        assert uuid == TX_CHAR_UUID
+        self.notify_cb = cb
+
+    async def write_gatt_char(self, uuid: str, data: bytes, response: bool = False) -> None:
+        assert uuid == RX_CHAR_UUID
+        if self.fail_wo_response and not response:
+            raise RuntimeError("WriteWithoutResponse unsupported")
+        self.writes.append((uuid, bytes(data), response))
+
+    def simulate_notify(self, data: bytes) -> None:
+        assert self.notify_cb is not None
+        self.notify_cb(TX_CHAR_UUID, bytearray(data))
+
+    def simulate_disconnect(self) -> None:
+        self.connected = False
+        if self.disconnected_callback is not None:
+            self.disconnected_callback(self)
+
+
+def test_parse_linkchat_tag_and_tie_breaker() -> None:
+    assert parse_linkchat_tag("LC-1a2b") == "1a2b"
+    assert parse_linkchat_tag("LC-FFFF") == "ffff"
+    assert parse_linkchat_tag("LC-xyz1") is None
+    assert parse_linkchat_tag("MyLaptop") is None
+
+    dual = WindowsBleTransport("5000deadbeef0000")
+    assert dual.local_tag == "5000"
+    assert dual.should_initiate_central("LC-9000") is True
+    assert dual.should_initiate_central("LC-1000") is False
+    assert dual.should_initiate_central("Windows-PC") is True
+
+    central_only = WindowsBleTransport("5000deadbeef0000", force_central_only=True)
+    assert central_only.should_initiate_central("LC-1000") is True
+
+
+async def test_peripheral_failure_falls_back_to_central_only_and_connects() -> None:
+    scanners: list[_FakeScanner] = []
+    clients: list[_FakeClient] = []
+    mode_events: list[bool] = []
+
+    def make_scanner(**kwargs: Any) -> _FakeScanner:
+        s = _FakeScanner(**kwargs)
+        scanners.append(s)
+        return s
+
+    def make_client(device: _FakeDevice, **kwargs: Any) -> _FakeClient:
+        c = _FakeClient(device, **kwargs)
+        clients.append(c)
+        return c
+
+    transport = WindowsBleTransport(
+        "abcd111122223333",
+        on_mode_changed=mode_events.append,
+        scanner_factory=make_scanner,
+        client_factory=make_client,
+    )
+
+    # Simulate peripheral startup rejection regardless of host Bluetooth hardware.
+    async def fail_peripheral() -> bool:
+        return False
+
+    transport._start_peripheral = fail_peripheral  # type: ignore[method-assign]
+
+    events: list[tuple[str, Any]] = []
+
+    async def on_up(handle: str, mtu: int, rssi: int) -> None:
+        events.append(("up", (handle, mtu, rssi)))
+
+    async def on_down(handle: str) -> None:
+        events.append(("down", handle))
+
+    async def on_chunk(handle: str, data: bytes) -> None:
+        events.append(("chunk", (handle, data)))
+
+    transport.set_callbacks(on_up, on_down, on_chunk)
+    await transport.start()
+
+    try:
+        assert transport.central_only is True
+        assert transport.mode_label == "Central-Only"
+        assert mode_events == [True]
+
+        await asyncio.sleep(0.05)
+        assert len(scanners) == 1
+        assert scanners[0].started is True
+
+        # Even though peer tag 0001 < abcd, Central-only mode still connects!
+        dev = _FakeDevice(address="AA:BB:CC:DD:EE:FF", name="LC-0001")
+        adv = _FakeAdv(local_name="LC-0001", service_uuids=[SERVICE_UUID], rssi=-58)
+        scanners[0].detection_callback(dev, adv)
+        await asyncio.sleep(0.05)
+
+        assert len(clients) == 1
+        handle = "ble-c:AA:BB:CC:DD:EE:FF"
+        assert ("up", (handle, 247, -58)) in events
+
+        # Outbound write (with fallback to response=True if unacked write fails)
+        clients[0].fail_wo_response = True
+        await transport.send_chunk(handle, b"hello-chunk")
+        assert clients[0].writes == [(RX_CHAR_UUID, b"hello-chunk", True)]
+
+        # Inbound notification
+        clients[0].simulate_notify(b"reply-chunk")
+        await asyncio.sleep(0.05)
+        assert ("chunk", (handle, b"reply-chunk")) in events
+
+        # Disconnect callback
+        clients[0].simulate_disconnect()
+        await asyncio.sleep(0.05)
+        assert ("down", handle) in events
+    finally:
+        await transport.stop()
+
+
+def _drain_matching(q: queue.Queue[Any], pred: Any, timeout: float = 4.0) -> Any:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            ev = q.get(timeout=0.05)
+        except queue.Empty:
+            continue
+        if pred(ev):
+            return ev
+    raise AssertionError("Expected event not received within timeout")
+
+
+def test_backend_bridge_full_lifecycle(tmp_path: Path) -> None:
+    hub = NetworkHub()
+    from linkchat_core import LinkChatNode
+
+    bridge = BackendBridge(
+        data_dir=tmp_path / "win",
+        nickname="WinLaptop",
+        transport_factory=lambda: VirtualTransport("Win", hub),
+    )
+    bridge.start()
+    phone: LinkChatNode | None = None
+    try:
+        assert bridge.wait_ready(timeout=4.0)
+        ready = _drain_matching(bridge.events, lambda e: isinstance(e, NodeReadyEvent))
+        assert ready.nickname == "WinLaptop"
+        assert bridge._loop is not None
+
+        async def _setup_phone_and_connect() -> LinkChatNode:
+            p_transport = VirtualTransport("Phone", hub)
+            p_node = LinkChatNode(tmp_path / "phone", p_transport, nickname="Phone")
+            await p_node.start()
+            await hub.connect("Win", "Phone", latency_ms=2.0)
+            return p_node
+
+        phone = asyncio.run_coroutine_threadsafe(
+            _setup_phone_and_connect(), bridge._loop
+        ).result(timeout=4.0)
+
+        peer_ev = _drain_matching(
+            bridge.events,
+            lambda e: isinstance(e, PeerUpdatedEvent) and e.peer.nickname == "Phone",
+        )
+        phone_id = peer_ev.peer.node_id_hex
+
+        # Public chat from Windows bridge -> Phone
+        bridge.send_public("hello from windows")
+        pub_ev = _drain_matching(
+            bridge.events, lambda e: isinstance(e, PublicMessageEvent)
+        )
+        assert pub_ev.record.text == "hello from windows"
+
+        # Encrypted DM + ACK delivery status update
+        bridge.send_dm(phone_id, "secret dm")
+        dm_ev = _drain_matching(bridge.events, lambda e: isinstance(e, DmReceivedEvent))
+        assert dm_ev.record.text == "secret dm"
+
+        ack_ev = _drain_matching(
+            bridge.events,
+            lambda e: isinstance(e, DmStatusChangedEvent)
+            and e.msg_id == dm_ev.record.msg_id
+            and e.status == DMStatus.DELIVERED.value,
+        )
+        assert ack_ev.status == DMStatus.DELIVERED.value
+
+        # Fingerprint + verify + history queries
+        bridge.request_fingerprint(phone_id)
+        fp_ev = _drain_matching(
+            bridge.events, lambda e: isinstance(e, FingerprintReadyEvent)
+        )
+        assert len(fp_ev.fingerprint.groups) == 6
+        assert len(fp_ev.fingerprint.emojis) == 6
+
+        bridge.verify_peer(phone_id, True)
+        verified_ev = _drain_matching(
+            bridge.events,
+            lambda e: isinstance(e, PeerUpdatedEvent) and e.peer.verified is True,
+        )
+        assert verified_ev.peer.verified is True
+
+        bridge.request_history(phone_id)
+        hist_ev = _drain_matching(
+            bridge.events,
+            lambda e: isinstance(e, HistoryLoadedEvent) and e.channel == phone_id,
+        )
+        assert any(m.text == "secret dm" for m in hist_ev.messages)
+    finally:
+        if phone is not None and bridge._loop is not None and not bridge._loop.is_closed():
+            asyncio.run_coroutine_threadsafe(phone.stop(), bridge._loop).result(
+                timeout=4.0
+            )
+        bridge.stop()

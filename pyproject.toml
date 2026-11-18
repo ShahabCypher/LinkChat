@@ -24,8 +24,8 @@ windows = [
 ]
 
 [tool.setuptools]
-package-dir = { "linkchat_core" = "core/linkchat_core", "linkchat_sim" = "simulator/linkchat_sim" }
-packages = ["linkchat_core", "linkchat_sim"]
+package-dir = { "linkchat_core" = "core/linkchat_core", "linkchat_sim" = "simulator/linkchat_sim", "linkchat_win" = "windows/linkchat_win", "linkchat_win.ui" = "windows/linkchat_win/ui" }
+packages = ["linkchat_core", "linkchat_sim", "linkchat_win", "linkchat_win.ui"]
 
 [tool.pytest.ini_options]
 pythonpath = ["core", "windows", "simulator"]
