@@ -105,7 +105,20 @@ class MainWindow:
             padx=10,
             pady=3,
         )
-        self._mode_badge.grid(row=0, column=2, padx=(0, 16))
+        self._mode_badge.grid(row=0, column=2, padx=(0, 8))
+
+        self._connecting_badge = ctk.CTkLabel(
+            bar,
+            text="Connecting...",
+            font=(theme.FONT_FAMILY, 11, "bold"),
+            text_color=theme.ACCENT_CYAN,
+            fg_color=theme.BG_CARD,
+            corner_radius=8,
+            padx=10,
+            pady=3,
+        )
+        self._connecting_badge.grid(row=0, column=3, sticky="w", padx=(0, 12))
+        self._connecting_badge.grid_remove()
 
         nick_wrap = ctk.CTkFrame(bar, fg_color="transparent")
         nick_wrap.grid(row=0, column=4, padx=(0, 12))
@@ -515,6 +528,10 @@ class MainWindow:
         )
         online = sum(1 for p in peers if p.connected)
         self._radar_title.configure(text=f"PEER RADAR ({online}/{len(peers)})")
+        if self._own_node_id and online == 0:
+            self._connecting_badge.grid()
+        else:
+            self._connecting_badge.grid_remove()
 
         if self._active_channel == "#public":
             self._public_btn.configure(fg_color=theme.ACCENT_BLUE)
