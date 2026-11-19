@@ -10,3 +10,6 @@ captures/
 .cxx/
 *.apk
 *.aab
+!app/src/test/
+!app/src/test/**
+
