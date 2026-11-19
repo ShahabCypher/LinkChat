@@ -7,7 +7,7 @@ import inspect
 import os
 import random
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Callable
 
 from cryptography.exceptions import InvalidTag
@@ -188,7 +188,11 @@ class MeshRouter:
         for chunk in chunks:
             if handle not in self.links:
                 return False
-            await self.transport.send_chunk(handle, chunk)
+            try:
+                await self.transport.send_chunk(handle, chunk)
+            except Exception as exc:
+                await self._log("SEND_ERR", f"Send failed on {handle}: {exc}")
+                return False
         return True
 
     def _build_hello_packet(self) -> bytes:
@@ -226,9 +230,23 @@ class MeshRouter:
         if link is not None and link.peer_node_id is not None:
             peer = self.peers.get(link.peer_node_id)
             if peer is not None and peer.link_handle == handle:
-                peer.direct = False
-                peer.connected = False
-                peer.link_handle = None
+                alt = next(
+                    (
+                        other
+                        for other in self.links.values()
+                        if other.peer_node_id == link.peer_node_id
+                    ),
+                    None,
+                )
+                if alt is not None:
+                    peer.link_handle = alt.handle
+                    peer.rssi = alt.rssi
+                    peer.direct = True
+                    peer.connected = True
+                else:
+                    peer.direct = False
+                    peer.connected = False
+                    peer.link_handle = None
                 await self._emit(self.on_peer_updated, peer)
 
     async def _on_chunk(self, handle: str, chunk: bytes) -> None:
@@ -680,12 +698,12 @@ class MeshRouter:
         if not self.links:
             return
         for item in self.dm_queue.pending_for(target_id):
-            await self._send_to_all_links(item.raw_packet)
-            msg_hex = item.msg_id.hex()
-            self.storage.update_message_status(msg_hex, DMStatus.RELAYED.value)
-            await self._emit(
-                self.on_dm_status_changed, msg_hex, DMStatus.RELAYED.value
-            )
+            if await self._send_to_all_links(item.raw_packet) > 0:
+                msg_hex = item.msg_id.hex()
+                self.storage.update_message_status(msg_hex, DMStatus.RELAYED.value)
+                await self._emit(
+                    self.on_dm_status_changed, msg_hex, DMStatus.RELAYED.value
+                )
 
     def _build_public_packet(self, msg_id: bytes, ts_ms: int, text: str) -> bytes:
         header = PacketHeader(
@@ -780,5 +798,8 @@ class MeshRouter:
         )
         self.storage.save_message(record)
         if reachable:
-            await self._send_to_all_links(raw)
+            sent = await self._send_to_all_links(raw)
+            if sent == 0:
+                self.storage.update_message_status(msg_id.hex(), DMStatus.SENDING.value)
+                record = replace(record, status=DMStatus.SENDING.value)
         return record

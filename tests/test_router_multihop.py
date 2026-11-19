@@ -204,3 +204,116 @@ async def test_five_node_linear_chain_public_and_e2ee_dm(tmp_path: Path) -> None
     finally:
         for node in nodes.values():
             await node.stop()
+
+
+async def test_set_nickname_and_messaging_survive_dead_link(tmp_path: Path) -> None:
+    """A closed link must not break nickname broadcasts, DMs, ACKs, or public chat."""
+    hub = NetworkHub()
+    t_win = VirtualTransport("Win", hub)
+    t_phone = VirtualTransport("Phone", hub)
+
+    win = LinkChatNode(tmp_path / "win", t_win, nickname="WinOld", jitter_range=(0.0, 0.0))
+    phone = LinkChatNode(tmp_path / "phone", t_phone, nickname="Phone", jitter_range=(0.0, 0.0))
+
+    phone_pubs: list[MessageRecord] = []
+    phone_dms: list[MessageRecord] = []
+    win_statuses: list[tuple[str, str]] = []
+    phone.on_public_message = phone_pubs.append
+    phone.on_dm_received = phone_dms.append
+    win.on_dm_status_changed = lambda mid, st: win_statuses.append((mid, st))
+
+    await win.start()
+    await phone.start()
+    try:
+        await hub.connect("Win", "Phone", latency_ms=2.0)
+        await _wait_until(lambda: len(win.get_peers()) == 1 and len(phone.get_peers()) == 1)
+
+        # Inject a stale/dead link alongside the live "Phone" link and make send_chunk
+        # drop it with OSError, matching Windows WinError -2147483629 behavior.
+        dead_handle = "ble-c:DEAD"
+        await win.router._on_link_up(dead_handle, mtu=247, rssi=-60)
+        orig_send_chunk = t_win.send_chunk
+
+        async def flaky_send_chunk(peer_handle: str, chunk: bytes) -> None:
+            if peer_handle == dead_handle:
+                await win.router._on_link_down(dead_handle)
+                raise OSError(22, "The object has been closed.", None, -2147483629)
+            await orig_send_chunk(peer_handle, chunk)
+
+        t_win.send_chunk = flaky_send_chunk  # type: ignore[method-assign]
+
+        # Changing nickname should still deliver the updated HELLO over the live link.
+        await win.set_nickname("WinNew")
+        await _wait_until(lambda: phone.get_peers()[0].nickname == "WinNew")
+        assert dead_handle not in win.router.links
+
+        # Public chat and E2EE DM + ACK continue working normally afterward.
+        await win.send_public("still works")
+        await _wait_until(lambda: len(phone_pubs) == 1)
+        assert phone_pubs[0].text == "still works"
+        assert phone_pubs[0].sender_nick == "WinNew"
+
+        dm_rec = await win.send_dm(phone.node_id, "dm still works")
+        await _wait_until(
+            lambda: len(phone_dms) == 1 and (dm_rec.msg_id, "delivered") in win_statuses
+        )
+        assert phone_dms[0].text == "dm still works"
+    finally:
+        await win.stop()
+        await phone.stop()
+
+
+async def test_all_links_failing_marks_messages_sending_for_sync(tmp_path: Path) -> None:
+    hub = NetworkHub()
+    t_win = VirtualTransport("Win", hub)
+    t_phone = VirtualTransport("Phone", hub)
+    win = LinkChatNode(tmp_path / "win", t_win, nickname="Win")
+    phone = LinkChatNode(tmp_path / "phone", t_phone, nickname="Phone")
+    await win.start()
+    await phone.start()
+    try:
+        await hub.connect("Win", "Phone", latency_ms=2.0)
+        await _wait_until(lambda: len(win.get_peers()) == 1)
+
+        async def fail_all(_peer_handle: str, _chunk: bytes) -> None:
+            raise OSError("closed")
+
+        t_win.send_chunk = fail_all  # type: ignore[method-assign]
+
+        pub_rec = await win.send_public("queued public")
+        assert pub_rec.status == "sending"
+        dm_rec = await win.send_dm(phone.node_id, "queued dm")
+        assert dm_rec.status == "sending"
+    finally:
+        await win.stop()
+        await phone.stop()
+
+
+async def test_link_down_preserves_peer_connected_if_alternate_link_exists(
+    tmp_path: Path,
+) -> None:
+    hub = NetworkHub()
+    t_win = VirtualTransport("Win", hub)
+    t_phone = VirtualTransport("Phone", hub)
+    win = LinkChatNode(tmp_path / "win", t_win, nickname="Win")
+    phone = LinkChatNode(tmp_path / "phone", t_phone, nickname="Phone")
+    await win.start()
+    await phone.start()
+    try:
+        await hub.connect("Win", "Phone", latency_ms=2.0)
+        await _wait_until(lambda: len(win.get_peers()) == 1)
+
+        # Simulate a second direct handle to the same peer becoming the active link_handle.
+        alt_handle = "ble-c:ALT"
+        await win.router._on_link_up(alt_handle, mtu=247, rssi=-55)
+        win.router.links[alt_handle].peer_node_id = phone.node_id
+        peer = win.router.peers[phone.node_id]
+        peer.link_handle = alt_handle
+
+        await win.router._on_link_down(alt_handle)
+        assert peer.connected is True
+        assert peer.direct is True
+        assert peer.link_handle == "Phone"
+    finally:
+        await win.stop()
+        await phone.stop()
