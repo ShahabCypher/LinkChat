@@ -129,3 +129,59 @@ async def test_queued_dm_delivered_after_peer_reconnects(tmp_path: Path) -> None
     finally:
         await alice.stop()
         await bob.stop()
+
+
+async def test_offline_public_message_updates_to_relayed_after_sync(
+    tmp_path: Path,
+) -> None:
+    hub = NetworkHub()
+    alice_dir = tmp_path / "Alice"
+    alice = LinkChatNode(
+        alice_dir,
+        VirtualTransport("Alice", hub),
+        nickname="Alice",
+        jitter_range=(0.002, 0.005),
+    )
+    alice_statuses: list[tuple[str, str]] = []
+    alice.on_dm_status_changed = lambda mid, st: alice_statuses.append((mid, st))
+    await alice.start()
+    try:
+        offline_rec = await alice.send_public("sent while alone")
+        assert offline_rec.status == "sending"
+    finally:
+        await alice.stop()
+
+    # Restart Alice so pending public message must also reload from SQLite.
+    alice_restarted = LinkChatNode(
+        alice_dir,
+        VirtualTransport("Alice", hub),
+        nickname="Alice",
+        jitter_range=(0.002, 0.005),
+    )
+    restarted_statuses: list[tuple[str, str]] = []
+    alice_restarted.on_dm_status_changed = lambda mid, st: restarted_statuses.append(
+        (mid, st)
+    )
+    bob = LinkChatNode(
+        tmp_path / "Bob",
+        VirtualTransport("Bob", hub),
+        nickname="Bob",
+        jitter_range=(0.002, 0.005),
+    )
+    bob_pub: list[MessageRecord] = []
+    bob.on_public_message = lambda rec: bob_pub.append(rec)
+
+    await alice_restarted.start()
+    await bob.start()
+    try:
+        await hub.connect("Alice", "Bob", latency_ms=2.0)
+        await _wait_until(
+            lambda: len(bob_pub) == 1
+            and (offline_rec.msg_id, "relayed") in restarted_statuses
+        )
+        assert bob_pub[0].text == "sent while alone"
+        history = alice_restarted.get_history("#public")
+        assert history[-1].status == "relayed"
+    finally:
+        await alice_restarted.stop()
+        await bob.stop()

@@ -80,6 +80,7 @@ class MeshRouter:
         self.links: dict[str, LinkState] = {}
         self.peers: dict[bytes, PeerInfo] = {}
         self._known_hellos: dict[bytes, bytes] = {}  # origin_id -> latest raw HELLO
+        self._pending_public: set[bytes] = set()
         self._forward_tasks: set[asyncio.Task[None]] = set()
         self._maintenance_task: asyncio.Task[None] | None = None
         self._started = False
@@ -96,6 +97,17 @@ class MeshRouter:
             return
         for peer in self.storage.load_peers():
             self.peers[peer.node_id] = peer
+        pending_public = [
+            rec
+            for rec in self.storage.get_history("#public")
+            if rec.is_outgoing and rec.status == DMStatus.SENDING.value
+        ]
+        for rec in pending_public[-self.public_cache.max_size :]:
+            msg_id = bytes.fromhex(rec.msg_id)
+            raw = self._build_public_packet(msg_id, rec.timestamp_ms, rec.text)
+            self.seen_cache.check_and_add(self.identity.node_id, msg_id)
+            self.public_cache.add(msg_id, raw)
+            self._pending_public.add(msg_id)
         self.transport.set_callbacks(
             on_link_up=self._on_link_up,
             on_link_down=self._on_link_down,
@@ -168,15 +180,16 @@ class MeshRouter:
                     peer.connected = False
                     await self._emit(self.on_peer_updated, peer)
 
-    async def _send_packet_to_link(self, handle: str, raw_packet: bytes) -> None:
+    async def _send_packet_to_link(self, handle: str, raw_packet: bytes) -> bool:
         link = self.links.get(handle)
         if link is None:
-            return
+            return False
         chunks = self.assembler.chunk_packet(raw_packet, mtu=link.mtu, peer_handle=handle)
         for chunk in chunks:
             if handle not in self.links:
-                return
+                return False
             await self.transport.send_chunk(handle, chunk)
+        return True
 
     def _build_hello_packet(self) -> bytes:
         header = PacketHeader(
@@ -600,9 +613,17 @@ class MeshRouter:
         sent = 0
         for mid in pkt.payload.msg_ids:
             cached_raw = self.public_cache.get(mid)
-            if cached_raw is not None:
-                await self._send_packet_to_link(from_handle, cached_raw)
+            if cached_raw is not None and await self._send_packet_to_link(
+                from_handle, cached_raw
+            ):
                 sent += 1
+                if mid in self._pending_public:
+                    self._pending_public.discard(mid)
+                    msg_hex = mid.hex()
+                    self.storage.update_message_status(msg_hex, DMStatus.RELAYED.value)
+                    await self._emit(
+                        self.on_dm_status_changed, msg_hex, DMStatus.RELAYED.value
+                    )
         if sent:
             await self._log(
                 "SYNC_REPLAY",
@@ -651,8 +672,8 @@ class MeshRouter:
     async def _send_to_all_links(self, raw_packet: bytes) -> int:
         sent = 0
         for handle in list(self.links):
-            await self._send_packet_to_link(handle, raw_packet)
-            sent += 1
+            if await self._send_packet_to_link(handle, raw_packet):
+                sent += 1
         return sent
 
     async def _flush_outbound_dms(self, target_id: bytes) -> None:
@@ -666,10 +687,7 @@ class MeshRouter:
                 self.on_dm_status_changed, msg_hex, DMStatus.RELAYED.value
             )
 
-    async def send_public(self, text: str) -> MessageRecord:
-        """Sign, cache, persist, and broadcast a #public message."""
-        ts_ms = int(time.time() * 1000)
-        msg_id = os.urandom(8)
+    def _build_public_packet(self, msg_id: bytes, ts_ms: int, text: str) -> bytes:
         header = PacketHeader(
             pkt_type=PacketType.CHAT_PUBLIC,
             origin_id=self.identity.node_id,
@@ -681,12 +699,23 @@ class MeshRouter:
         sig = sign_public_message(
             self.identity, header.encode(), ts_ms, text.encode("utf-8")
         )
-        raw = encode_packet(
+        return encode_packet(
             header,
             ChatPublicPayload(timestamp_ms=ts_ms, text=text, ed25519_sig=sig),
         )
+
+    async def send_public(self, text: str) -> MessageRecord:
+        """Sign, cache, persist, and broadcast a #public message."""
+        ts_ms = int(time.time() * 1000)
+        msg_id = os.urandom(8)
+        raw = self._build_public_packet(msg_id, ts_ms, text)
         self.seen_cache.check_and_add(self.identity.node_id, msg_id)
         self.public_cache.add(msg_id, raw)
+
+        sent = await self._send_to_all_links(raw)
+        status = DMStatus.RELAYED.value if sent > 0 else DMStatus.SENDING.value
+        if sent == 0:
+            self._pending_public.add(msg_id)
 
         record = MessageRecord(
             msg_id=msg_id.hex(),
@@ -697,11 +726,10 @@ class MeshRouter:
             text=text,
             timestamp_ms=ts_ms,
             is_outgoing=True,
-            status=DMStatus.RELAYED.value if self.links else DMStatus.SENDING.value,
+            status=status,
             hop_count=0,
         )
         self.storage.save_message(record)
-        await self._send_to_all_links(raw)
         return record
 
     async def send_dm(self, target_id: bytes, text: str) -> MessageRecord:
