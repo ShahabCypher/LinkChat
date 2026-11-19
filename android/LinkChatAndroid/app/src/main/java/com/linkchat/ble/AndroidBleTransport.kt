@@ -55,6 +55,11 @@ object BleTieBreaker {
         val remoteTag = parseLinkChatTag(remoteLocalNameOrData) ?: return true
         return localTag.lowercase() <= remoteTag
     }
+
+    fun isPeerBlocked(knownTag: String?, blockedTags: Set<String>): Boolean {
+        if (knownTag == null || blockedTags.isEmpty()) return false
+        return blockedTags.contains(knownTag.lowercase())
+    }
 }
 
 /**
@@ -120,13 +125,58 @@ class AndroidBleTransport(
     private val peripheralLinks = LinkedHashMap<String, PeripheralLink>() // key = handle
     private val lastConnectAttemptMs = HashMap<String, Long>()
     private val knownMtuByAddress = HashMap<String, Int>()
+    private val tagByAddress = HashMap<String, String>()
+    private val tagByHandle = HashMap<String, String>()
 
     private var scanRetryRunnable: Runnable? = null
 
     fun setBlockedTags(tags: Set<String>) {
         opsHandler.post {
             blockedTags = tags.map { it.lowercase() }.toSet()
+            if (blockedTags.isNotEmpty()) {
+                dropBlockedLinks()
+            }
         }
+    }
+
+    fun registerPeerLinkTag(linkHandle: String, shortTag: String) {
+        val clean = shortTag.trim().lowercase()
+        if (clean.isEmpty()) return
+        opsHandler.post {
+            tagByHandle[linkHandle] = clean
+            if (blockedTags.contains(clean)) {
+                dropBlockedLinks()
+            }
+        }
+    }
+
+    private fun isBlockedPeer(address: String, handle: String): Boolean {
+        val tag = tagByHandle[handle] ?: tagByAddress[address]
+        return BleTieBreaker.isPeerBlocked(tag, blockedTags)
+    }
+
+    private fun dropBlockedLinks() {
+        for (cLink in centralLinks.values.toList()) {
+            if (isBlockedPeer(cLink.address, cLink.handle)) {
+                teardownCentralLink(cLink)
+            }
+        }
+        for (pLink in peripheralLinks.values.toList()) {
+            if (isBlockedPeer(pLink.device.address, pLink.handle)) {
+                teardownPeripheralLink(pLink)
+            }
+        }
+    }
+
+    private fun teardownPeripheralLink(pLink: PeripheralLink) {
+        pLink.watchdogRunnable?.let { opsHandler.removeCallbacks(it) }
+        peripheralLinks.remove(pLink.handle)
+        knownMtuByAddress.remove(pLink.device.address)
+        runCatching { gattServer?.cancelConnection(pLink.device) }
+        if (pLink.linkUpNotified) {
+            pythonBridge.onLinkDown(pLink.handle)
+        }
+        emitStatus()
     }
 
     fun start(shortTag: String) {
@@ -367,6 +417,10 @@ class AndroidBleTransport(
         override fun onConnectionStateChange(device: BluetoothDevice, status: Int, newState: Int) {
             opsHandler.post {
                 val handle = peripheralHandle(device.address)
+                if (newState == BluetoothProfile.STATE_CONNECTED && isBlockedPeer(device.address, handle)) {
+                    runCatching { gattServer?.cancelConnection(device) }
+                    return@post
+                }
                 if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                     val pLink = peripheralLinks.remove(handle)
                     knownMtuByAddress.remove(device.address)
@@ -419,10 +473,14 @@ class AndroidBleTransport(
                 if (responseNeeded) {
                     gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, copy)
                 }
+                val handle = peripheralHandle(device.address)
+                if (isBlockedPeer(device.address, handle)) {
+                    runCatching { gattServer?.cancelConnection(device) }
+                    return@post
+                }
                 if (descriptor.uuid == LinkChatGattProfile.CCCD_UUID && copy != null) {
                     val enabled = copy.contentEquals(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE) ||
                         copy.contentEquals(BluetoothGattDescriptor.ENABLE_INDICATION_VALUE)
-                    val handle = peripheralHandle(device.address)
                     if (enabled) {
                         ensurePeripheralLinkUp(device)
                     } else {
@@ -449,6 +507,10 @@ class AndroidBleTransport(
             opsHandler.post {
                 if (responseNeeded) {
                     gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, null)
+                }
+                if (isBlockedPeer(device.address, peripheralHandle(device.address))) {
+                    runCatching { gattServer?.cancelConnection(device) }
+                    return@post
                 }
                 if (characteristic.uuid == LinkChatGattProfile.RX_CHAR_UUID && copy.isNotEmpty()) {
                     val pLink = ensurePeripheralLinkUp(device)
@@ -607,6 +669,11 @@ class AndroidBleTransport(
         val remoteLabel = serviceLabel ?: result.scanRecord?.deviceName ?: device.name
 
         val remoteTag = BleTieBreaker.parseLinkChatTag(remoteLabel)
+        if (remoteTag != null) {
+            tagByAddress[address] = remoteTag
+            tagByHandle[centralHandle(address)] = remoteTag
+            tagByHandle[peripheralHandle(address)] = remoteTag
+        }
         if (remoteTag != null && blockedTags.contains(remoteTag)) {
             return
         }

@@ -31,6 +31,7 @@ class LinkChatService : Service() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var bleTransport: AndroidBleTransport? = null
     private var blockedTagsJob: Job? = null
+    private var peerTagsJob: Job? = null
     private var bluetoothReceiverRegistered = false
 
     private val bluetoothStateReceiver = object : BroadcastReceiver() {
@@ -85,6 +86,18 @@ class LinkChatService : Service() {
             }
         }
 
+        peerTagsJob?.cancel()
+        peerTagsJob = serviceScope.launch {
+            app.pythonBridge.peers.collect { peersMap ->
+                peersMap.values.forEach { peer ->
+                    val handle = peer.linkHandle
+                    if (peer.direct && peer.connected && handle != null) {
+                        transport.registerPeerLinkTag(handle, peer.shortTag)
+                    }
+                }
+            }
+        }
+
         app.pythonBridge.start(onReady = { shortTag ->
             transport.start(shortTag)
         })
@@ -103,6 +116,8 @@ class LinkChatService : Service() {
     private fun stopMesh() {
         blockedTagsJob?.cancel()
         blockedTagsJob = null
+        peerTagsJob?.cancel()
+        peerTagsJob = null
         if (bluetoothReceiverRegistered) {
             runCatching { unregisterReceiver(bluetoothStateReceiver) }
             bluetoothReceiverRegistered = false

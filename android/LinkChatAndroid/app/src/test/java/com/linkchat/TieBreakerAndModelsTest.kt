@@ -33,6 +33,10 @@ class TieBreakerAndModelsTest {
         assertFalse(BleTieBreaker.shouldInitiateCentral("5000", "LC-1000"))
         assertTrue(BleTieBreaker.shouldInitiateCentral("5000", "LC-5000"))
         assertTrue(BleTieBreaker.shouldInitiateCentral("5000", "Windows-PC"))
+
+        assertTrue(BleTieBreaker.isPeerBlocked("ABCD", setOf("abcd", "1234")))
+        assertFalse(BleTieBreaker.isPeerBlocked("9999", setOf("abcd")))
+        assertFalse(BleTieBreaker.isPeerBlocked(null, setOf("abcd")))
     }
 
     @Test
