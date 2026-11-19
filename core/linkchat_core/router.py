@@ -64,6 +64,7 @@ class MeshRouter:
         transport: TransportAdapter,
         stale_timeout_sec: float = 90.0,
         jitter_range: tuple[float, float] = (0.015, 0.060),
+        hello_interval_sec: float = 20.0,
     ) -> None:
         self.identity = identity
         self.nickname = nickname
@@ -71,6 +72,8 @@ class MeshRouter:
         self.transport = transport
         self.stale_timeout_sec = stale_timeout_sec
         self.jitter_range = jitter_range
+        self.hello_interval_sec = hello_interval_sec
+        self._last_hello_at = time.monotonic()
 
         self.assembler = ChunkAssembler()
         self.seen_cache = SeenCache()
@@ -179,6 +182,8 @@ class MeshRouter:
                 ):
                     peer.connected = False
                     await self._emit(self.on_peer_updated, peer)
+            if self.links and (time.monotonic() - self._last_hello_at) >= self.hello_interval_sec:
+                await self.broadcast_hello()
 
     async def _send_packet_to_link(self, handle: str, raw_packet: bytes) -> bool:
         link = self.links.get(handle)
@@ -213,9 +218,20 @@ class MeshRouter:
 
     async def broadcast_hello(self) -> None:
         """Broadcast a fresh HELLO packet across all active links."""
+        self._last_hello_at = time.monotonic()
         raw = self._build_hello_packet()
         for handle in list(self.links):
             await self._send_packet_to_link(handle, raw)
+
+    def _schedule_hello_refresh(self, delay_sec: float = 0.25) -> None:
+        async def _refresh() -> None:
+            await asyncio.sleep(delay_sec)
+            if self._started and self.links:
+                await self.broadcast_hello()
+
+        task = asyncio.create_task(_refresh())
+        self._forward_tasks.add(task)
+        task.add_done_callback(self._forward_tasks.discard)
 
     async def _on_link_up(self, handle: str, mtu: int, rssi: int) -> None:
         self.links[handle] = LinkState(handle=handle, mtu=mtu, rssi=rssi)
@@ -247,6 +263,8 @@ class MeshRouter:
                     peer.direct = False
                     peer.connected = False
                     peer.link_handle = None
+                    if self._started and self.links:
+                        self._schedule_hello_refresh()
                 await self._emit(self.on_peer_updated, peer)
 
     async def _on_chunk(self, handle: str, chunk: bytes) -> None:
@@ -431,7 +449,9 @@ class MeshRouter:
             )
             return
 
-        self._update_relayed_reachability(peer, hdr.hop)
+        if self._update_relayed_reachability(peer, hdr.hop):
+            await self._emit(self.on_peer_updated, peer)
+            await self._flush_outbound_dms(peer.node_id)
         self.public_cache.add(hdr.msg_id, raw_packet)
 
         record = MessageRecord(
@@ -507,6 +527,8 @@ class MeshRouter:
             )
             return
 
+        if self._update_relayed_reachability(peer, hdr.hop):
+            await self._emit(self.on_peer_updated, peer)
         record = MessageRecord(
             msg_id=hdr.msg_id.hex(),
             channel=peer.node_id_hex,
@@ -649,11 +671,12 @@ class MeshRouter:
                 pkt_type="SYNC_REQ",
             )
 
-    def _update_relayed_reachability(self, peer: PeerInfo, hop: int) -> None:
+    def _update_relayed_reachability(self, peer: PeerInfo, hop: int) -> bool:
         now = time.time()
         peer.last_seen = now
         if peer.direct and peer.connected:
-            return
+            return False
+        prev = (peer.connected, peer.direct, peer.hop_count)
         observed = hop + 1
         if not peer.connected or peer.hop_count == 0:
             peer.hop_count = observed
@@ -661,6 +684,7 @@ class MeshRouter:
             peer.hop_count = min(peer.hop_count, observed)
         peer.connected = True
         peer.direct = False
+        return (peer.connected, peer.direct, peer.hop_count) != prev
 
     def _schedule_forward(
         self, from_handle: str, pkt: Packet, raw_packet: bytes

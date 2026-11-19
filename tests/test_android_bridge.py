@@ -11,6 +11,8 @@ from pathlib import Path
 from typing import Any
 
 from linkchat_core import DMStatus, LinkChatNode
+from linkchat_sim.virtual_transport import NetworkHub, VirtualTransport
+from linkchat_win.app import BackendBridge, HistoryLoadedEvent, MeshLogEvent
 
 BRIDGE_DIR = Path(__file__).resolve().parent.parent / "android" / "LinkChatAndroid" / "app" / "src" / "main" / "python"
 if str(BRIDGE_DIR) not in sys.path:
@@ -166,3 +168,151 @@ def test_android_bridge_end_to_end_chunk_exchange(tmp_path: Path) -> None:
         asyncio.run(_run_peer_side())
     finally:
         bridge_inst.stop()
+
+
+class _BridgeHubSink:
+    """Bridges an AndroidBridge instance onto a VirtualTransport inside NetworkHub."""
+
+    def __init__(self, bridge_inst: android_bridge.AndroidBridge, vtrans: VirtualTransport) -> None:
+        self.bridge = bridge_inst
+        self.vtrans = vtrans
+        self.loop: asyncio.AbstractEventLoop | None = None
+
+        async def _on_up(handle: str, mtu: int, rssi: int) -> None:
+            self.bridge.on_link_up(handle, mtu, rssi)
+
+        async def _on_down(handle: str) -> None:
+            self.bridge.on_link_down(handle)
+
+        async def _on_chunk(handle: str, data: bytes) -> None:
+            self.bridge.on_chunk(handle, data)
+
+        self.vtrans.set_callbacks(_on_up, _on_down, _on_chunk)
+
+    def sendChunk(self, peer_handle: str, chunk: bytes) -> None:
+        if self.loop is not None and not self.loop.is_closed():
+            raw = bytes(chunk)
+            asyncio.run_coroutine_threadsafe(
+                self.vtrans.send_chunk(peer_handle, raw),
+                self.loop,
+            )
+
+
+def test_cross_platform_three_node_android_windows_android_multihop(tmp_path: Path) -> None:
+    """Verify PhoneA (AndroidBridge) <-> WinLaptop (BackendBridge) <-> PhoneB (AndroidBridge)."""
+    hub = NetworkHub()
+    win_bridge = BackendBridge(
+        data_dir=tmp_path / "win",
+        nickname="WinLaptop",
+        transport_factory=lambda: VirtualTransport("WinLaptop", hub),
+    )
+    phone_a = android_bridge.AndroidBridge()
+    phone_b = android_bridge.AndroidBridge()
+    col_a = _EventCollector()
+    col_b = _EventCollector()
+
+    vt_a = VirtualTransport("PhoneA", hub)
+    vt_b = VirtualTransport("PhoneB", hub)
+    sink_a = _BridgeHubSink(phone_a, vt_a)
+    sink_b = _BridgeHubSink(phone_b, vt_b)
+
+    win_bridge.start()
+    try:
+        assert win_bridge.wait_ready(timeout=4.0)
+        assert win_bridge._loop is not None
+        sink_a.loop = win_bridge._loop
+        sink_b.loop = win_bridge._loop
+
+        ready_a = json.loads(
+            phone_a.start(str(tmp_path / "phone_a"), sink_a, col_a, nickname="PhoneA")
+        )
+        ready_b = json.loads(
+            phone_b.start(str(tmp_path / "phone_b"), sink_b, col_b, nickname="PhoneB")
+        )
+
+        async def _connect_chain() -> None:
+            await vt_a.start()
+            await vt_b.start()
+            await hub.connect("PhoneA", "WinLaptop", latency_ms=2.0, mtu=247, rssi=-54)
+            await hub.connect("WinLaptop", "PhoneB", latency_ms=2.0, mtu=247, rssi=-56)
+
+        asyncio.run_coroutine_threadsafe(_connect_chain(), win_bridge._loop).result(timeout=4.0)
+
+        async def _verify() -> None:
+            b_ev = await _wait_event(
+                col_a,
+                lambda e: e.get("type") == "peer_updated"
+                and e["peer"]["node_id_hex"] == ready_b["node_id_hex"]
+                and e["peer"]["connected"] is True,
+            )
+            assert b_ev["peer"]["direct"] is False
+            assert b_ev["peer"]["hop_count"] == 2
+
+            await _wait_event(
+                col_b,
+                lambda e: e.get("type") == "peer_updated"
+                and e["peer"]["node_id_hex"] == ready_a["node_id_hex"]
+                and e["peer"]["connected"] is True,
+            )
+
+            # Symmetric safety fingerprints across PhoneA and PhoneB
+            fp_a = json.loads(phone_a.get_safety_fingerprint(ready_b["node_id_hex"]))
+            fp_b = json.loads(phone_b.get_safety_fingerprint(ready_a["node_id_hex"]))
+            assert fp_a["safety_number"] == fp_b["safety_number"]
+            assert fp_a["emojis"] == fp_b["emojis"]
+
+            # Public chat PhoneA -> WinLaptop -> PhoneB
+            phone_a.send_public("hello across windows")
+            pub_b = await _wait_event(
+                col_b,
+                lambda e: e.get("type") == "public_message"
+                and e["record"]["text"] == "hello across windows",
+            )
+            assert pub_b["record"]["hop_count"] == 2
+
+            # E2EE DM PhoneA -> WinLaptop -> PhoneB + DM_ACK back
+            phone_a.send_dm(ready_b["node_id_hex"], "secret via laptop")
+            dm_a = await _wait_event(
+                col_a,
+                lambda e: e.get("type") == "dm_received"
+                and e["record"]["text"] == "secret via laptop",
+            )
+            dm_b = await _wait_event(
+                col_b,
+                lambda e: e.get("type") == "dm_received"
+                and e["record"]["text"] == "secret via laptop",
+            )
+            assert dm_b["record"]["hop_count"] == 2
+
+            ack_a = await _wait_event(
+                col_a,
+                lambda e: e.get("type") == "dm_status_changed"
+                and e.get("msg_id") == dm_a["record"]["msg_id"]
+                and e.get("status") == DMStatus.DELIVERED.value,
+            )
+            assert ack_a["status"] == DMStatus.DELIVERED.value
+
+            # Confirm WinLaptop relayed encrypted DM without decrypting it
+            win_bridge.request_history(ready_b["node_id_hex"])
+            relayed = False
+            history_checked = False
+            deadline = time.monotonic() + 2.0
+            while time.monotonic() < deadline and not (relayed and history_checked):
+                try:
+                    ev = win_bridge.events.get_nowait()
+                except queue.Empty:
+                    await asyncio.sleep(0.02)
+                    continue
+                if isinstance(ev, MeshLogEvent) and ev.entry.event_type == "RELAY_DM":
+                    relayed = True
+                elif isinstance(ev, HistoryLoadedEvent) and ev.channel == ready_b["node_id_hex"]:
+                    assert len(ev.messages) == 0
+                    history_checked = True
+            assert relayed is True
+            assert history_checked is True
+
+        asyncio.run(_verify())
+    finally:
+        phone_a.stop()
+        phone_b.stop()
+        win_bridge.stop()

@@ -317,3 +317,66 @@ async def test_link_down_preserves_peer_connected_if_alternate_link_exists(
     finally:
         await win.stop()
         await phone.stop()
+
+
+async def test_three_node_direct_drop_recovers_via_relay_and_delivers_dm(
+    tmp_path: Path,
+) -> None:
+    """Dropping PhoneA<->PhoneB in a triangle falls back cleanly to 2-hop relay via WinLaptop."""
+    hub = NetworkHub()
+    names = ["PhoneA", "WinLaptop", "PhoneB"]
+    nodes: dict[str, LinkChatNode] = {}
+    pub: dict[str, list[MessageRecord]] = {n: [] for n in names}
+    dm: dict[str, list[MessageRecord]] = {n: [] for n in names}
+    statuses: list[tuple[str, str]] = []
+
+    for n in names:
+        node = LinkChatNode(
+            tmp_path / n,
+            VirtualTransport(n, hub),
+            nickname=n,
+            jitter_range=(0.002, 0.005),
+        )
+        node.on_public_message = lambda rec, name=n: pub[name].append(rec)
+        node.on_dm_received = lambda rec, name=n: dm[name].append(rec)
+        if n == "PhoneA":
+            node.on_dm_status_changed = lambda mid, st: statuses.append((mid, st))
+        await node.start()
+        nodes[n] = node
+
+    try:
+        # Initially all three nodes see each other directly in the same room.
+        await hub.connect("PhoneA", "WinLaptop", latency_ms=2.0, mtu=247)
+        await hub.connect("WinLaptop", "PhoneB", latency_ms=2.0, mtu=247)
+        await hub.connect("PhoneA", "PhoneB", latency_ms=2.0, mtu=247)
+        await _wait_until(lambda: all(len(n.get_peers()) == 2 for n in nodes.values()))
+
+        phone_a = nodes["PhoneA"]
+        phone_b = nodes["PhoneB"]
+
+        # Simulate blocking PhoneB on PhoneA -> direct link drops, WinLaptop relay remains.
+        await hub.disconnect("PhoneA", "PhoneB")
+        await _wait_until(
+            lambda: (
+                (p := phone_a.router.peers.get(phone_b.node_id)) is not None
+                and p.connected
+                and not p.direct
+                and p.hop_count == 2
+            ),
+            timeout=4.0,
+        )
+
+        await phone_a.send_public("hello over laptop relay")
+        await _wait_until(lambda: len(pub["PhoneB"]) == 1)
+        assert pub["PhoneB"][0].hop_count == 2
+
+        dm_rec = await phone_a.send_dm(phone_b.node_id, "secret 2-hop dm")
+        await _wait_until(
+            lambda: len(dm["PhoneB"]) == 1 and (dm_rec.msg_id, "delivered") in statuses
+        )
+        assert dm["PhoneB"][0].text == "secret 2-hop dm"
+        assert dm["PhoneB"][0].hop_count == 2
+        assert len(dm["WinLaptop"]) == 0
+    finally:
+        for node in nodes.values():
+            await node.stop()
