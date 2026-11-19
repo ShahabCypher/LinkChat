@@ -5,8 +5,9 @@ from pathlib import Path
 from PyInstaller.utils.hooks import collect_all, collect_data_files, collect_submodules
 
 ROOT = Path(SPECPATH).resolve().parent
+ICON_PATH = ROOT / "windows" / "linkchat_win" / "assets" / "linkchat.ico"
 
-datas = []
+datas = [(str(ICON_PATH), "linkchat_win/assets")]
 binaries = []
 hiddenimports = [
     "_cffi_backend",
@@ -51,6 +52,7 @@ exe = EXE(
     a.datas,
     [],
     name="LinkChat",
+    icon=str(ICON_PATH),
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
