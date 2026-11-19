@@ -2,12 +2,30 @@
 
 from __future__ import annotations
 
+import os
 import sqlite3
 import time
 from pathlib import Path
 
 from .identity import Identity
 from .transport import MessageRecord, PeerInfo
+
+
+def _secure_delete_file(path: Path) -> None:
+    """Overwrite a file with random bytes and fsync before unlinking."""
+    if not path.exists() or not path.is_file():
+        return
+    size = path.stat().st_size
+    if size > 0:
+        with open(path, "r+b") as handle:
+            remaining = size
+            while remaining > 0:
+                chunk = min(remaining, 65536)
+                handle.write(os.urandom(chunk))
+                remaining -= chunk
+            handle.flush()
+            os.fsync(handle.fileno())
+    path.unlink(missing_ok=True)
 
 
 class Storage:
@@ -22,6 +40,7 @@ class Storage:
         self._init_schema()
 
     def _init_schema(self) -> None:
+        self._conn.execute("PRAGMA secure_delete = ON")
         with self._conn:
             self._conn.executescript(
                 """
@@ -61,6 +80,16 @@ class Storage:
 
     def close(self) -> None:
         self._conn.close()
+
+    def wipe_and_reinit(self) -> None:
+        """Securely overwrite and delete linkchat.db (and sidecars), then recreate an empty DB."""
+        self._conn.close()
+        for suffix in ("", "-wal", "-shm", "-journal"):
+            _secure_delete_file(Path(f"{self.db_path}{suffix}"))
+        self.data_dir.mkdir(parents=True, exist_ok=True)
+        self._conn = sqlite3.connect(str(self.db_path))
+        self._conn.row_factory = sqlite3.Row
+        self._init_schema()
 
     def load_or_create_identity(
         self, nickname: str | None = None

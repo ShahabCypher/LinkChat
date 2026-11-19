@@ -138,6 +138,20 @@ class MeshRouter:
         self._forward_tasks.clear()
         await self.transport.stop()
 
+    def reset_state(self, identity: Identity, nickname: str) -> None:
+        """Clear all in-memory routing, peer, and cache state for a new identity."""
+        self.identity = identity
+        self.nickname = nickname
+        self._last_hello_at = time.monotonic()
+        self.links.clear()
+        self.peers.clear()
+        self._known_hellos.clear()
+        self._pending_public.clear()
+        self.assembler.clear_all()
+        self.seen_cache.clear()
+        self.public_cache.clear()
+        self.dm_queue.clear()
+
     async def _emit(self, callback: Callable[..., Any] | None, *args: Any) -> None:
         if callback is None:
             return

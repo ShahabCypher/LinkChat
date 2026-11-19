@@ -422,6 +422,11 @@ class ChunkAssembler:
         for key in [k for k in self._buffers if k[0] == peer_handle]:
             del self._buffers[key]
 
+    def clear_all(self) -> None:
+        """Reset all buffered incomplete frames and per-link frame counters."""
+        self._next_frame_id.clear()
+        self._buffers.clear()
+
     @property
     def pending_count(self) -> int:
         return len(self._buffers)

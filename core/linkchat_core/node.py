@@ -101,6 +101,16 @@ class LinkChatNode:
         await self.router.stop()
         self.storage.close()
 
+    async def reset_all(self) -> None:
+        """Wipe all persisted and in-memory state, rotate identity, and restart."""
+        await self.router.stop()
+        self.storage.wipe_and_reinit()
+        self.identity, self._nickname = self.storage.load_or_create_identity(nickname=None)
+        self.router.reset_state(self.identity, self._nickname)
+        if hasattr(self.transport, "set_node_id"):
+            self.transport.set_node_id(self.identity.node_id_hex)
+        await self.router.start()
+
     async def set_nickname(self, name: str) -> None:
         self._nickname = name
         self.router.nickname = name

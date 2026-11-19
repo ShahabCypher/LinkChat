@@ -185,3 +185,69 @@ async def test_offline_public_message_updates_to_relayed_after_sync(
     finally:
         await alice_restarted.stop()
         await bob.stop()
+
+
+async def test_node_reset_all_rotates_identity_clears_caches_and_rejoins(
+    tmp_path: Path,
+) -> None:
+    hub = NetworkHub()
+    alice = LinkChatNode(
+        tmp_path / "Alice",
+        VirtualTransport("Alice", hub),
+        nickname="Alice",
+        jitter_range=(0.002, 0.005),
+    )
+    bob = LinkChatNode(
+        tmp_path / "Bob",
+        VirtualTransport("Bob", hub),
+        nickname="Bob",
+        jitter_range=(0.002, 0.005),
+    )
+    bob_peers: list[str] = []
+    bob_pub: list[MessageRecord] = []
+    bob.on_peer_updated = lambda p: bob_peers.append(p.node_id_hex)
+    bob.on_public_message = lambda rec: bob_pub.append(rec)
+
+    await alice.start()
+    await bob.start()
+    try:
+        await hub.connect("Alice", "Bob", latency_ms=2.0)
+        await _wait_until(lambda: len(alice.get_peers()) == 1 and len(bob.get_peers()) == 1)
+
+        alice.verify_peer(bob.node_id, True)
+        await alice.send_public("before reset")
+        await alice.send_dm(bob.node_id, "dm before reset")
+        await _wait_until(lambda: len(bob_pub) == 1)
+
+        old_id = alice.node_id_hex
+        old_bob_hex = bob.node_id_hex
+        assert len(alice.router.seen_cache) > 0
+        assert len(alice.router.public_cache) > 0
+
+        await alice.reset_all()
+
+        assert alice.node_id_hex != old_id
+        assert alice.nickname == f"Node-{alice.short_tag}"
+        assert alice.get_peers() == []
+        assert alice.get_history("#public") == []
+        assert alice.get_history(old_bob_hex) == []
+        assert len(alice.router.seen_cache) == 0
+        assert len(alice.router.public_cache) == 0
+        assert len(alice.router.dm_queue) == 0
+        assert alice.router.assembler.pending_count == 0
+
+        # Alice rejoins as a brand-new unverified peer from Bob's perspective.
+        await _wait_until(
+            lambda: alice.node_id in bob.router.peers
+            and any(p.node_id_hex == bob.node_id_hex for p in alice.get_peers())
+        )
+        new_alice_on_bob = bob.router.peers[alice.node_id]
+        assert new_alice_on_bob.nickname == f"Node-{alice.short_tag}"
+        assert new_alice_on_bob.verified is False
+        assert alice.router.peers[bob.node_id].verified is False
+
+        await alice.send_public("after reset")
+        await _wait_until(lambda: any(m.text == "after reset" for m in bob_pub))
+    finally:
+        await alice.stop()
+        await bob.stop()

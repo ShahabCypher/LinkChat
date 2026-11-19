@@ -40,6 +40,9 @@ class SeenCache:
     def __len__(self) -> int:
         return len(self._entries)
 
+    def clear(self) -> None:
+        self._entries.clear()
+
 
 @dataclass(slots=True)
 class CachedPublicPacket:
@@ -89,6 +92,9 @@ class PublicMessageCache:
     def __len__(self) -> int:
         return len(self._items)
 
+    def clear(self) -> None:
+        self._items.clear()
+
 
 @dataclass(slots=True)
 class QueuedDM:
@@ -135,3 +141,6 @@ class OutboundDMQueue:
 
     def __len__(self) -> int:
         return len(self._items)
+
+    def clear(self) -> None:
+        self._items.clear()

@@ -144,3 +144,45 @@ def test_tofu_key_change_warning(tmp_path: Path) -> None:
     )
     assert (verified, changed) == (False, True)
     store.close()
+
+
+def test_storage_wipe_and_reinit_clears_all_data(tmp_path: Path) -> None:
+    from linkchat_core.transport import MessageRecord
+
+    store = Storage(tmp_path)
+    ident_1, nick_1 = store.load_or_create_identity("Alice")
+    peer = Identity.generate()
+    store.upsert_peer(peer.node_id, "Bob", peer.ed25519_pub, peer.x25519_pub)
+    store.set_peer_verified(peer.node_id_hex, True)
+    store.save_message(
+        MessageRecord(
+            msg_id="0011223344556677",
+            channel="#public",
+            origin_id=ident_1.node_id_hex,
+            target_id="00" * 8,
+            sender_nick="Alice",
+            text="secret message before wipe",
+            timestamp_ms=1730000000000,
+            is_outgoing=True,
+            status="relayed",
+            hop_count=0,
+        )
+    )
+
+    # Create a sidecar journal file to verify sidecar cleanup as well.
+    wal_sidecar = Path(f"{store.db_path}-wal")
+    wal_sidecar.write_bytes(b"sensitive wal content")
+    unrelated = tmp_path / "chaquopy_runtime_keep.txt"
+    unrelated.write_text("do not delete", encoding="utf-8")
+
+    store.wipe_and_reinit()
+
+    assert not wal_sidecar.exists()
+    assert unrelated.read_text(encoding="utf-8") == "do not delete"
+    assert store.load_peers() == []
+    assert store.get_history("#public") == []
+
+    ident_2, nick_2 = store.load_or_create_identity()
+    assert ident_2.node_id != ident_1.node_id
+    assert nick_2 == f"Node-{ident_2.short_tag}"
+    store.close()
