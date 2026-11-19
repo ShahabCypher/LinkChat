@@ -190,22 +190,74 @@ class WindowsBleTransport:
 
         await self._stop_peripheral()
 
+    def _schedule_bg(
+        self, coro_factory: Callable[[], Awaitable[None]], label: str
+    ) -> None:
+        loop = self._loop
+        if loop is None or not loop.is_running():
+            return
+
+        async def _run() -> None:
+            try:
+                await coro_factory()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("Unhandled error in %s", label)
+
+        with contextlib.suppress(RuntimeError):
+            loop.call_soon_threadsafe(lambda: asyncio.create_task(_run()))
+
+    async def _drop_central_link(self, handle: str, link: _CentralLink) -> None:
+        logger.warning("Dropping closed/disconnected central link %s", handle)
+        await self._handle_central_disconnect(handle)
+        with contextlib.suppress(Exception):
+            await link.client.disconnect()
+
+    async def _handle_peripheral_disconnect(self, handle: str) -> None:
+        link = self._peripheral_links.pop(handle, None)
+        if link is None:
+            return
+        if self._on_link_down is not None:
+            await self._on_link_down(handle)
+
     async def send_chunk(self, peer_handle: str, chunk: bytes) -> None:
         if not self._started:
             return
 
         c_link = self._central_links.get(peer_handle)
         if c_link is not None:
+            if not getattr(c_link.client, "is_connected", True):
+                await self._drop_central_link(peer_handle, c_link)
+                raise ConnectionError(f"Central link {peer_handle} is disconnected")
             try:
                 await c_link.client.write_gatt_char(RX_CHAR_UUID, chunk, response=False)
+                return
+            except OSError:
+                # WinRT handle closed/cancelled: drop link instead of retrying.
+                await self._drop_central_link(peer_handle, c_link)
+                raise
             except Exception:
+                if not getattr(c_link.client, "is_connected", True):
+                    await self._drop_central_link(peer_handle, c_link)
+                    raise
                 # Some peripherals only accept Write With Response.
-                await c_link.client.write_gatt_char(RX_CHAR_UUID, chunk, response=True)
-            return
+                try:
+                    await c_link.client.write_gatt_char(
+                        RX_CHAR_UUID, chunk, response=True
+                    )
+                    return
+                except Exception:
+                    await self._drop_central_link(peer_handle, c_link)
+                    raise
 
         p_link = self._peripheral_links.get(peer_handle)
         if p_link is not None:
-            await self._send_peripheral_notification(p_link, chunk)
+            try:
+                await self._send_peripheral_notification(p_link, chunk)
+            except Exception:
+                await self._handle_peripheral_disconnect(peer_handle)
+                raise
 
     # ------------------------------------------------------------------
     # Central role (bleak)
@@ -263,15 +315,15 @@ class WindowsBleTransport:
         handle = f"ble-c:{addr}"
 
         def _on_disconnect(_client: Any) -> None:
-            if self._loop is not None and self._loop.is_running():
-                self._loop.call_soon_threadsafe(
-                    lambda: asyncio.create_task(self._handle_central_disconnect(handle))
-                )
+            self._schedule_bg(
+                lambda: self._handle_central_disconnect(handle),
+                f"central disconnect ({handle})",
+            )
 
         client = self._client_factory(device, disconnected_callback=_on_disconnect)
         try:
             await client.connect()
-            if not self._started:
+            if not self._started or not getattr(client, "is_connected", True):
                 with contextlib.suppress(Exception):
                     await client.disconnect()
                 return
@@ -280,18 +332,20 @@ class WindowsBleTransport:
             mtu = max(DEFAULT_MTU, min(int(raw_mtu), MAX_WIN_MTU))
 
             def _on_notify(_char: Any, data: bytearray) -> None:
-                if self._on_chunk is None or self._loop is None:
+                if self._on_chunk is None:
                     return
                 payload = bytes(data)
                 on_chunk = self._on_chunk
-
-                def _dispatch() -> None:
-                    asyncio.create_task(on_chunk(handle, payload))
-
-                if self._loop.is_running():
-                    self._loop.call_soon_threadsafe(_dispatch)
+                self._schedule_bg(
+                    lambda: on_chunk(handle, payload),
+                    f"central notify ({handle})",
+                )
 
             await client.start_notify(TX_CHAR_UUID, _on_notify)
+            if not self._started or not getattr(client, "is_connected", True):
+                with contextlib.suppress(Exception):
+                    await client.disconnect()
+                return
             self._central_links[handle] = _CentralLink(
                 handle=handle,
                 address=addr,
@@ -352,10 +406,10 @@ class WindowsBleTransport:
             peer_id = str(kwargs.get("device") or "bless-central")
             handle = f"ble-p:{peer_id}"
             data = bytes(value)
-            if self._loop is not None:
-                self._loop.call_soon_threadsafe(
-                    lambda: asyncio.create_task(self._handle_bless_write(handle, peer_id, data))
-                )
+            self._schedule_bg(
+                lambda: self._handle_bless_write(handle, peer_id, data),
+                f"bless write ({handle})",
+            )
 
         server.read_request_func = lambda _char, **_kw: bytearray()
         server.write_request_func = _on_write
@@ -445,7 +499,8 @@ class WindowsBleTransport:
             self._winrt_tx_char = tx_res.characteristic
 
             def _on_write_requested(_sender: Any, args: Any) -> None:
-                if self._loop is None:
+                loop = self._loop
+                if loop is None or not loop.is_running():
                     return
                 deferral = args.get_deferral()
                 session_id = str(args.session.device_id.id)
@@ -469,22 +524,23 @@ class WindowsBleTransport:
                                 await self._on_link_up(handle, mtu, DEFAULT_RSSI)
                         if self._on_chunk is not None:
                             await self._on_chunk(handle, data)
+                    except Exception:
+                        logger.exception("Unhandled error in WinRT write handler")
                     finally:
                         deferral.complete()
 
                 try:
-                    self._loop.call_soon_threadsafe(
+                    loop.call_soon_threadsafe(
                         lambda: asyncio.create_task(_process())
                     )
                 except RuntimeError:
                     deferral.complete()
 
             def _on_subscribed_changed(sender: Any, _args: Any) -> None:
-                if self._loop is None:
-                    return
                 clients = list(sender.subscribed_clients)
-                self._loop.call_soon_threadsafe(
-                    lambda: asyncio.create_task(self._sync_winrt_subscribers(clients))
+                self._schedule_bg(
+                    lambda: self._sync_winrt_subscribers(clients),
+                    "WinRT subscribers sync",
                 )
 
             w_tok = self._winrt_rx_char.add_write_requested(_on_write_requested)
@@ -519,9 +575,7 @@ class WindowsBleTransport:
         # Handle disconnects
         for handle in list(self._peripheral_links):
             if handle not in current:
-                self._peripheral_links.pop(handle, None)
-                if self._on_link_down is not None:
-                    await self._on_link_down(handle)
+                await self._handle_peripheral_disconnect(handle)
 
         # Handle new subscriptions
         for handle, sub in current.items():
@@ -567,9 +621,7 @@ class WindowsBleTransport:
 
     async def _stop_peripheral(self) -> None:
         for handle in list(self._peripheral_links):
-            self._peripheral_links.pop(handle, None)
-            if self._on_link_down is not None:
-                await self._on_link_down(handle)
+            await self._handle_peripheral_disconnect(handle)
 
         for obj, remover_name, token in self._winrt_tokens:
             with contextlib.suppress(Exception):

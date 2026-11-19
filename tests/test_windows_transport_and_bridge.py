@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from linkchat_core import DMStatus
 from linkchat_core.protocol import RX_CHAR_UUID, SERVICE_UUID, TX_CHAR_UUID
 from linkchat_sim.virtual_transport import NetworkHub, VirtualTransport
@@ -276,3 +278,138 @@ def test_backend_bridge_full_lifecycle(tmp_path: Path) -> None:
                 timeout=4.0
             )
         bridge.stop()
+
+
+async def test_closed_central_link_drops_cleanly_on_send_chunk() -> None:
+    scanners: list[_FakeScanner] = []
+    clients: list[_FakeClient] = []
+
+    class _ClosingClient(_FakeClient):
+        def __init__(self, device: _FakeDevice, disconnected_callback: Any = None) -> None:
+            super().__init__(device, disconnected_callback=disconnected_callback)
+            self.is_connected = True
+            self.write_attempts = 0
+
+        async def disconnect(self) -> None:
+            self.is_connected = False
+            await super().disconnect()
+
+        async def write_gatt_char(
+            self, uuid: str, data: bytes, response: bool = False
+        ) -> None:
+            self.write_attempts += 1
+            raise OSError(22, "The object has been closed.", None, -2147483629)
+
+    def make_scanner(**kwargs: Any) -> _FakeScanner:
+        s = _FakeScanner(**kwargs)
+        scanners.append(s)
+        return s
+
+    def make_client(device: _FakeDevice, **kwargs: Any) -> _ClosingClient:
+        c = _ClosingClient(device, **kwargs)
+        clients.append(c)
+        return c
+
+    transport = WindowsBleTransport(
+        "abcd111122223333",
+        force_central_only=True,
+        scanner_factory=make_scanner,
+        client_factory=make_client,
+    )
+
+    down_events: list[str] = []
+
+    async def on_up(_handle: str, _mtu: int, _rssi: int) -> None:
+        pass
+
+    async def on_down(handle: str) -> None:
+        down_events.append(handle)
+
+    async def on_chunk(_handle: str, _data: bytes) -> None:
+        pass
+
+    transport.set_callbacks(on_up, on_down, on_chunk)
+    await transport.start()
+    try:
+        await asyncio.sleep(0.05)
+        dev = _FakeDevice(address="11:22:33:44:55:66", name="LC-0001")
+        adv = _FakeAdv(local_name="LC-0001", service_uuids=[SERVICE_UUID], rssi=-55)
+        scanners[0].detection_callback(dev, adv)
+        await asyncio.sleep(0.05)
+
+        handle = "ble-c:11:22:33:44:55:66"
+        assert handle in transport._central_links
+
+        with pytest.raises(OSError, match="The object has been closed"):
+            await transport.send_chunk(handle, b"hello")
+
+        # Should NOT retry write_gatt_char(response=True) on OSError.
+        assert clients[0].write_attempts == 1
+        assert down_events == [handle]
+        assert handle not in transport._central_links
+        assert "11:22:33:44:55:66" not in transport._central_by_addr
+        assert clients[0].is_connected is False
+    finally:
+        await transport.stop()
+
+
+async def test_disconnected_central_and_failing_peripheral_drop_on_send() -> None:
+    scanners: list[_FakeScanner] = []
+    clients: list[_FakeClient] = []
+
+    class _FlagClient(_FakeClient):
+        def __init__(self, device: _FakeDevice, disconnected_callback: Any = None) -> None:
+            super().__init__(device, disconnected_callback=disconnected_callback)
+            self.is_connected = True
+
+    transport = WindowsBleTransport(
+        "abcd111122223333",
+        force_central_only=True,
+        scanner_factory=lambda **kw: scanners.append(_FakeScanner(**kw)) or scanners[-1],
+        client_factory=lambda dev, **kw: clients.append(_FlagClient(dev, **kw)) or clients[-1],
+    )
+    down_events: list[str] = []
+
+    async def noop_up(_h: str, _m: int, _r: int) -> None:
+        pass
+
+    async def on_down(h: str) -> None:
+        down_events.append(h)
+
+    async def noop_chunk(_h: str, _d: bytes) -> None:
+        pass
+
+    transport.set_callbacks(noop_up, on_down, noop_chunk)
+    await transport.start()
+    try:
+        await asyncio.sleep(0.05)
+        dev = _FakeDevice(address="AA:11:22:33:44:55", name="LC-0002")
+        adv = _FakeAdv(local_name="LC-0002", service_uuids=[SERVICE_UUID], rssi=-60)
+        scanners[0].detection_callback(dev, adv)
+        await asyncio.sleep(0.05)
+
+        c_handle = "ble-c:AA:11:22:33:44:55"
+        clients[0].is_connected = False
+        with pytest.raises(ConnectionError):
+            await transport.send_chunk(c_handle, b"ping")
+        assert c_handle in down_events
+        assert c_handle not in transport._central_links
+
+        # Simulate a failing peripheral link
+        from linkchat_win.ble_transport import _PeripheralLink
+
+        p_handle = "ble-p:dev-1"
+        transport._peripheral_links[p_handle] = _PeripheralLink(
+            handle=p_handle, device_id="dev-1", mtu=247
+        )
+
+        async def fail_notify(_link: Any, _chunk: bytes) -> None:
+            raise OSError("peripheral closed")
+
+        transport._send_peripheral_notification = fail_notify  # type: ignore[method-assign]
+        with pytest.raises(OSError, match="peripheral closed"):
+            await transport.send_chunk(p_handle, b"pong")
+        assert p_handle in down_events
+        assert p_handle not in transport._peripheral_links
+    finally:
+        await transport.stop()
