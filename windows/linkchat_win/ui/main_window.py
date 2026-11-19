@@ -627,10 +627,23 @@ class MainWindow:
             return "✓", theme.STATUS_GREEN
         return "○", theme.TEXT_DIM
 
+    def _set_msg_placeholder(self, text: str) -> None:
+        if self._msg_entry.cget("placeholder_text") == text:
+            return
+        try:
+            focused = self.root.focus_get() is self._msg_entry._entry
+        except KeyError:
+            focused = False
+        self._msg_entry.configure(placeholder_text=text)
+        if focused:
+            # CTkEntry.configure(placeholder_text=...) activates placeholder even
+            # when focused if empty, leaving _placeholder_text_active=True so get() returns "".
+            self._msg_entry._deactivate_placeholder()
+
     def _update_channel_header(self) -> None:
         if self._active_channel == "#public":
             self._channel_title.configure(text="#public — Mesh Broadcast")
-            self._msg_entry.configure(placeholder_text="Message #public...")
+            self._set_msg_placeholder("Message #public...")
             self._verify_btn.grid_remove()
             self._key_warning_banner.grid_remove()
             return
@@ -646,7 +659,7 @@ class MainWindow:
         self._channel_title.configure(
             text=f"E2EE DM · {peer.nickname} ({peer.node_id_hex[:4]}) · {status}"
         )
-        self._msg_entry.configure(placeholder_text=f"Encrypted DM to {peer.nickname}...")
+        self._set_msg_placeholder(f"Encrypted DM to {peer.nickname}...")
         self._verify_btn.grid()
         if peer.key_changed:
             self._key_warning_banner.grid()
