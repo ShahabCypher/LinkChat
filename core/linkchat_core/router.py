@@ -7,6 +7,7 @@ import inspect
 import os
 import random
 import time
+from collections import OrderedDict
 from dataclasses import dataclass, replace
 from typing import Any, Callable
 
@@ -84,6 +85,9 @@ class MeshRouter:
         self.peers: dict[bytes, PeerInfo] = {}
         self._known_hellos: dict[bytes, bytes] = {}  # origin_id -> latest raw HELLO
         self._pending_public: set[bytes] = set()
+        self._min_public_ts_ms: int = self.storage.get_min_public_ts_ms()
+        self._requested_sync_ids: OrderedDict[bytes, float] = OrderedDict()
+        self._ignored_sync_ids: OrderedDict[bytes, float] = OrderedDict()
         self._forward_tasks: set[asyncio.Task[None]] = set()
         self._maintenance_task: asyncio.Task[None] | None = None
         self._started = False
@@ -143,10 +147,13 @@ class MeshRouter:
         self.identity = identity
         self.nickname = nickname
         self._last_hello_at = time.monotonic()
+        self._min_public_ts_ms = self.storage.get_min_public_ts_ms()
         self.links.clear()
         self.peers.clear()
         self._known_hellos.clear()
         self._pending_public.clear()
+        self._requested_sync_ids.clear()
+        self._ignored_sync_ids.clear()
         self.assembler.clear_all()
         self.seen_cache.clear()
         self.public_cache.clear()
@@ -432,14 +439,46 @@ class MeshRouter:
             )
             await self._send_packet_to_link(handle, fwd)
 
+    @staticmethod
+    def _remember_sync_id(
+        store: OrderedDict[bytes, float],
+        msg_id: bytes,
+        *,
+        max_size: int = 500,
+        ttl_sec: float = 7200.0,
+    ) -> None:
+        now = time.monotonic()
+        while store:
+            _, ts = next(iter(store.items()))
+            if now - ts <= ttl_sec:
+                break
+            store.popitem(last=False)
+        store[msg_id] = now
+        store.move_to_end(msg_id)
+        if len(store) > max_size:
+            store.popitem(last=False)
+
     async def _handle_chat_public(
         self, from_handle: str, pkt: Packet, raw_packet: bytes
     ) -> None:
         assert isinstance(pkt.payload, ChatPublicPayload)
         hdr = pkt.header
         payload = pkt.payload
+        is_sync_replay = self._requested_sync_ids.pop(hdr.msg_id, None) is not None
+        if is_sync_replay and self._min_public_ts_ms > 0 and payload.timestamp_ms < self._min_public_ts_ms:
+            self._remember_sync_id(self._ignored_sync_ids, hdr.msg_id)
+            await self._log(
+                "DROP",
+                f"Ignored pre-wipe synced CHAT_PUBLIC {hdr.msg_id.hex()[:6]}",
+                pkt_type="CHAT_PUBLIC",
+                msg_id=hdr.msg_id.hex(),
+            )
+            return
+
         peer = self.peers.get(hdr.origin_id)
         if peer is None:
+            if is_sync_replay:
+                self._remember_sync_id(self._ignored_sync_ids, hdr.msg_id)
             await self._log(
                 "DROP",
                 f"Dropped CHAT_PUBLIC from unknown peer {hdr.origin_id.hex()[:4]}",
@@ -642,11 +681,23 @@ class MeshRouter:
 
     async def _handle_sync_digest(self, from_handle: str, pkt: Packet) -> None:
         assert isinstance(pkt.payload, SyncDigestPayload)
+        now = time.monotonic()
+        while self._ignored_sync_ids:
+            _, ts = next(iter(self._ignored_sync_ids.items()))
+            if now - ts <= 7200.0:
+                break
+            self._ignored_sync_ids.popitem(last=False)
         missing = [
-            mid for mid in pkt.payload.msg_ids if self.public_cache.get(mid) is None
+            mid
+            for mid in pkt.payload.msg_ids
+            if self.public_cache.get(mid) is None and mid not in self._ignored_sync_ids
         ]
         if not missing:
             return
+        for mid in missing:
+            self._remember_sync_id(
+                self._requested_sync_ids, mid, max_size=500, ttl_sec=120.0
+            )
         req_header = PacketHeader(
             pkt_type=PacketType.SYNC_REQ,
             origin_id=self.identity.node_id,

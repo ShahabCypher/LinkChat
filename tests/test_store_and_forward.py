@@ -251,3 +251,93 @@ async def test_node_reset_all_rotates_identity_clears_caches_and_rejoins(
     finally:
         await alice.stop()
         await bob.stop()
+
+
+async def test_wiped_node_does_not_receive_pre_wipe_public_messages_on_reconnect(
+    tmp_path: Path,
+) -> None:
+    hub = NetworkHub()
+    alice_dir = tmp_path / "Alice"
+    alice = LinkChatNode(
+        alice_dir,
+        VirtualTransport("Alice", hub),
+        nickname="Alice",
+        jitter_range=(0.002, 0.005),
+    )
+    bob = LinkChatNode(
+        tmp_path / "Bob",
+        VirtualTransport("Bob", hub),
+        nickname="Bob",
+        jitter_range=(0.002, 0.005),
+    )
+    alice_pub: list[MessageRecord] = []
+    bob_pub: list[MessageRecord] = []
+    alice.on_public_message = lambda rec: alice_pub.append(rec)
+    bob.on_public_message = lambda rec: bob_pub.append(rec)
+
+    await alice.start()
+    await bob.start()
+    try:
+        await hub.connect("Alice", "Bob", latency_ms=2.0)
+        await _wait_until(lambda: len(alice.get_peers()) == 1 and len(bob.get_peers()) == 1)
+
+        await bob.send_public("bob before wipe")
+        await alice.send_public("alice before wipe")
+        await _wait_until(
+            lambda: len(alice_pub) == 1 and len(bob_pub) == 1
+        )
+        assert len(bob.router.public_cache) == 2
+
+        alice_pub.clear()
+        await alice.reset_all()
+        await _wait_until(
+            lambda: alice.node_id in bob.router.peers
+            and any(p.node_id_hex == bob.node_id_hex for p in alice.get_peers())
+        )
+        # Allow SYNC_DIGEST/SYNC_REQ round-trip to settle.
+        await asyncio.sleep(0.1)
+
+        assert alice_pub == []
+        assert alice.get_history("#public") == []
+
+        # Restart Alice from disk -> pre-wipe cutoff still holds.
+        await alice.stop()
+        alice_restarted = LinkChatNode(
+            alice_dir,
+            VirtualTransport("Alice", hub),
+            jitter_range=(0.002, 0.005),
+        )
+        restarted_pub: list[MessageRecord] = []
+        alice_restarted.on_public_message = lambda rec: restarted_pub.append(rec)
+        await alice_restarted.start()
+        try:
+            await _wait_until(
+                lambda: any(
+                    p.node_id == bob.node_id and p.connected
+                    for p in alice_restarted.get_peers()
+                )
+            )
+            await asyncio.sleep(0.1)
+            assert restarted_pub == []
+            assert alice_restarted.get_history("#public") == []
+
+            # New live message after wipe is delivered normally.
+            await bob.send_public("live after wipe")
+            await _wait_until(lambda: any(m.text == "live after wipe" for m in restarted_pub))
+
+            # Post-wipe partition catch-up still delivers messages sent after wipe.
+            await hub.disconnect("Alice", "Bob")
+            await bob.send_public("missed after wipe")
+            await hub.connect("Alice", "Bob", latency_ms=2.0)
+            await _wait_until(
+                lambda: any(m.text == "missed after wipe" for m in restarted_pub)
+            )
+            assert {m.text for m in restarted_pub} == {
+                "live after wipe",
+                "missed after wipe",
+            }
+        finally:
+            await alice_restarted.stop()
+    finally:
+        await alice.stop()
+        await bob.stop()

@@ -75,6 +75,10 @@ class Storage:
                 );
                 CREATE INDEX IF NOT EXISTS idx_messages_channel_ts
                     ON messages (channel, timestamp_ms);
+                CREATE TABLE IF NOT EXISTS meta (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                );
                 """
             )
 
@@ -83,6 +87,10 @@ class Storage:
 
     def wipe_and_reinit(self) -> None:
         """Securely overwrite and delete linkchat.db (and sidecars), then recreate an empty DB."""
+        row = self._conn.execute(
+            "SELECT MAX(timestamp_ms) AS max_ts FROM messages WHERE channel = '#public'"
+        ).fetchone()
+        prev_max_ts = int(row["max_ts"]) if row is not None and row["max_ts"] is not None else 0
         self._conn.close()
         for suffix in ("", "-wal", "-shm", "-journal"):
             _secure_delete_file(Path(f"{self.db_path}{suffix}"))
@@ -90,6 +98,19 @@ class Storage:
         self._conn = sqlite3.connect(str(self.db_path))
         self._conn.row_factory = sqlite3.Row
         self._init_schema()
+        cutoff_ms = max(int(time.time() * 1000), prev_max_ts + 1)
+        with self._conn:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO meta (key, value) VALUES ('min_public_ts_ms', ?)",
+                (str(cutoff_ms),),
+            )
+
+    def get_min_public_ts_ms(self) -> int:
+        """Return the post-wipe public sync cutoff timestamp in ms, or 0 if never wiped."""
+        row = self._conn.execute(
+            "SELECT value FROM meta WHERE key = 'min_public_ts_ms'"
+        ).fetchone()
+        return int(row["value"]) if row is not None else 0
 
     def load_or_create_identity(
         self, nickname: str | None = None
