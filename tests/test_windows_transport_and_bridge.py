@@ -21,6 +21,7 @@ from linkchat_win.app import (
     FingerprintReadyEvent,
     HistoryLoadedEvent,
     NodeReadyEvent,
+    NodeResetEvent,
     PeerUpdatedEvent,
     PublicMessageEvent,
 )
@@ -472,3 +473,95 @@ async def test_android_service_data_tag_respected_by_windows_tie_breaker() -> No
         assert clients[0].device.address == "22:22:22:22:22:22"
     finally:
         await transport.stop()
+
+
+def test_backend_bridge_reset_all_clears_state_and_emits_new_identity(
+    tmp_path: Path,
+) -> None:
+    hub = NetworkHub()
+    bridge = BackendBridge(
+        data_dir=tmp_path / "win",
+        nickname="WinLaptop",
+        transport_factory=lambda: VirtualTransport("Win", hub),
+    )
+    bridge.start()
+    try:
+        assert bridge.wait_ready(timeout=5.0)
+        ready = None
+        while True:
+            ev = bridge.events.get(timeout=2.0)
+            if isinstance(ev, NodeReadyEvent):
+                ready = ev
+                break
+        assert ready is not None
+        assert ready.nickname == "WinLaptop"
+
+        bridge.send_public("hello before reset")
+        deadline = time.monotonic() + 3.0
+        while time.monotonic() < deadline:
+            try:
+                ev = bridge.events.get(timeout=0.1)
+                if isinstance(ev, PublicMessageEvent):
+                    break
+            except queue.Empty:
+                continue
+
+        bridge.reset_all()
+        reset_ev = None
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            try:
+                ev = bridge.events.get(timeout=0.1)
+                if isinstance(ev, NodeResetEvent):
+                    reset_ev = ev
+                    break
+            except queue.Empty:
+                continue
+
+        assert reset_ev is not None
+        assert reset_ev.node_id_hex != ready.node_id_hex
+        assert reset_ev.short_tag == reset_ev.node_id_hex[:4]
+        assert reset_ev.nickname == f"Node-{reset_ev.short_tag}"
+        assert bridge.nickname is None
+
+        # Persisted history is also cleared when requesting #public again.
+        bridge.request_history("#public")
+        hist_ev = None
+        deadline = time.monotonic() + 3.0
+        while time.monotonic() < deadline:
+            try:
+                ev = bridge.events.get(timeout=0.1)
+                if isinstance(ev, HistoryLoadedEvent) and ev.channel == "#public":
+                    hist_ev = ev
+                    break
+            except queue.Empty:
+                continue
+        assert hist_ev is not None
+        assert hist_ev.messages == []
+    finally:
+        bridge.stop()
+
+
+async def test_windows_ble_transport_clears_attempt_cooldown_on_stop() -> None:
+    transport = WindowsBleTransport("abcd111122223333")
+
+    async def ok_peripheral() -> bool:
+        return True
+
+    async def noop_up(_h: str, _m: int, _r: int) -> None:
+        pass
+
+    async def noop_down(_h: str) -> None:
+        pass
+
+    async def noop_chunk(_h: str, _d: bytes) -> None:
+        pass
+
+    transport._start_peripheral = ok_peripheral  # type: ignore[method-assign]
+    transport._scanner_factory = lambda **kw: _FakeScanner(**kw)
+    transport.set_callbacks(noop_up, noop_down, noop_chunk)
+
+    await transport.start()
+    transport._last_attempt["11:22:33:44:55:66"] = time.monotonic()
+    await transport.stop()
+    assert transport._last_attempt == {}

@@ -43,6 +43,15 @@ class NodeReadyEvent:
 
 
 @dataclass(frozen=True, slots=True)
+class NodeResetEvent:
+    node_id_hex: str
+    short_tag: str
+    nickname: str
+    mode_label: str
+    central_only: bool
+
+
+@dataclass(frozen=True, slots=True)
 class ModeChangedEvent:
     central_only: bool
     mode_label: str
@@ -283,6 +292,30 @@ class BackendBridge:
                     node_id_hex=node_id_hex,
                     peer=replace(peer),
                     fingerprint=fp,
+                )
+            )
+
+        self._submit(_op)
+
+    def reset_all(self) -> None:
+        self.nickname = None
+
+        async def _op(node: LinkChatNode) -> None:
+            await node.reset_all()
+            transport = self._transport
+            central_only = bool(getattr(transport, "central_only", False))
+            mode_label = getattr(
+                transport,
+                "mode_label",
+                "Central-Only" if central_only else "Dual-Role",
+            )
+            self.events.put(
+                NodeResetEvent(
+                    node_id_hex=node.node_id_hex,
+                    short_tag=node.short_tag,
+                    nickname=node.nickname,
+                    mode_label=mode_label,
+                    central_only=central_only,
                 )
             )
 

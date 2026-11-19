@@ -45,6 +45,8 @@ class MainWindow:
         self._loaded_channels: set[str] = set()
         self._status_labels: dict[str, ctk.CTkLabel] = {}
         self._inspector_lines = 0
+        self._verify_dialog: VerifyDialog | None = None
+        self._reset_dialog: ctk.CTkToplevel | None = None
 
         self._build_layout()
         self._poll_job = self.root.after(POLL_INTERVAL_MS, self._poll_events)
@@ -140,7 +142,18 @@ class MainWindow:
             hover_color=theme.BG_CARD_ACTIVE,
             command=self._toggle_inspector,
         )
-        self._inspector_btn.grid(row=0, column=5, padx=(0, 16))
+        self._inspector_btn.grid(row=0, column=5, padx=(0, 8))
+
+        self._reset_btn = ctk.CTkButton(
+            bar,
+            text="Reset Identity",
+            width=116,
+            fg_color="#7F1D1D",
+            hover_color="#991B1B",
+            text_color="#FEE2E2",
+            command=self._open_reset_confirm,
+        )
+        self._reset_btn.grid(row=0, column=6, padx=(0, 16))
 
     def _build_peer_sidebar(self) -> None:
         sidebar = ctk.CTkFrame(
@@ -333,6 +346,7 @@ class MainWindow:
             MeshLogEvent,
             ModeChangedEvent,
             NodeReadyEvent,
+            NodeResetEvent,
             PeerUpdatedEvent,
             PublicMessageEvent,
         )
@@ -342,6 +356,8 @@ class MainWindow:
                 ev = self.bridge.events.get_nowait()
                 if isinstance(ev, NodeReadyEvent):
                     self._on_node_ready(ev)
+                elif isinstance(ev, NodeResetEvent):
+                    self._on_node_reset(ev)
                 elif isinstance(ev, ModeChangedEvent):
                     self._update_mode_badge(ev.central_only, ev.mode_label)
                 elif isinstance(ev, PeerUpdatedEvent):
@@ -359,6 +375,7 @@ class MainWindow:
                 elif isinstance(ev, FingerprintReadyEvent):
                     self._on_fingerprint_ready(ev.peer, ev.fingerprint)
                 elif isinstance(ev, ErrorEvent):
+                    self._reset_btn.configure(state="normal", text="Reset Identity")
                     self._append_raw_inspector(f"[ERROR] {ev.message}")
         except queue.Empty:
             pass
@@ -441,12 +458,42 @@ class MainWindow:
             self._render_active_chat()
 
     def _on_fingerprint_ready(self, peer: PeerInfo, fingerprint: Any) -> None:
-        VerifyDialog(
+        if self._verify_dialog is not None and self._verify_dialog.winfo_exists():
+            self._verify_dialog.destroy()
+        self._verify_dialog = VerifyDialog(
             self.root,
             peer=peer,
             fingerprint=fingerprint,
             on_verify=self.bridge.verify_peer,
         )
+
+    def _on_node_reset(self, ev: Any) -> None:
+        if self._verify_dialog is not None and self._verify_dialog.winfo_exists():
+            self._verify_dialog.destroy()
+        self._verify_dialog = None
+        if self._reset_dialog is not None and self._reset_dialog.winfo_exists():
+            self._reset_dialog.destroy()
+        self._reset_dialog = None
+
+        self._reset_btn.configure(state="normal", text="Reset Identity")
+        self._own_node_id = ev.node_id_hex
+        self._active_channel = "#public"
+        self._peers.clear()
+        self._messages = {"#public": []}
+        self._seen_msg_ids = {"#public": set()}
+        self._unread_counts.clear()
+        self._loaded_channels = {"#public"}
+        self._status_labels.clear()
+        self._clear_inspector()
+
+        self._id_label.configure(text=f"ID: {ev.short_tag} ({ev.node_id_hex[:8]}…)")
+        self._nick_entry.delete(0, "end")
+        self._nick_entry.insert(0, ev.nickname)
+        self._msg_entry.delete(0, "end")
+        self._update_mode_badge(ev.central_only, ev.mode_label)
+        self._refresh_peer_radar()
+        self._update_channel_header()
+        self._render_active_chat()
 
     # ------------------------------------------------------------------
     # Rendering helpers
@@ -729,6 +776,78 @@ class MainWindow:
         self._inspector_text.delete("1.0", "end")
         self._inspector_lines = 0
         self._inspector_text.configure(state="disabled")
+
+    def _open_reset_confirm(self) -> None:
+        if self._reset_dialog is not None and self._reset_dialog.winfo_exists():
+            self._reset_dialog.focus()
+            return
+
+        dlg = ctk.CTkToplevel(self.root)
+        self._reset_dialog = dlg
+        dlg.title("Reset Identity & Wipe Data")
+        dlg.geometry("430x220")
+        dlg.resizable(False, False)
+        dlg.configure(fg_color=theme.BG_ROOT)
+        dlg.transient(self.root)
+        dlg.grab_set()
+
+        box = ctk.CTkFrame(
+            dlg,
+            fg_color=theme.BG_PANEL,
+            corner_radius=12,
+            border_width=1,
+            border_color=theme.BORDER_SUBTLE,
+        )
+        box.pack(fill="both", expand=True, padx=16, pady=16)
+
+        ctk.CTkLabel(
+            box,
+            text="Erase All Data & Reset Identity?",
+            font=(theme.FONT_FAMILY, 15, "bold"),
+            text_color="#FCA5A5",
+        ).pack(anchor="w", padx=16, pady=(14, 6))
+
+        ctk.CTkLabel(
+            box,
+            text=(
+                "This permanently wipes your cryptographic keys, nickname, "
+                "peers, trust records, and all chat history. You will rejoin "
+                "the mesh as a brand-new user."
+            ),
+            font=(theme.FONT_FAMILY, 12),
+            text_color=theme.TEXT_MUTED,
+            wraplength=365,
+            justify="left",
+        ).pack(anchor="w", padx=16, pady=(0, 16))
+
+        actions = ctk.CTkFrame(box, fg_color="transparent")
+        actions.pack(fill="x", padx=16, pady=(0, 12))
+
+        ctk.CTkButton(
+            actions,
+            text="Cancel",
+            width=100,
+            fg_color=theme.BG_CARD,
+            hover_color=theme.BG_CARD_ACTIVE,
+            command=dlg.destroy,
+        ).pack(side="left")
+
+        ctk.CTkButton(
+            actions,
+            text="Wipe & Reset",
+            width=130,
+            fg_color="#DC2626",
+            hover_color="#B91C1C",
+            text_color="#FFFFFF",
+            command=self._confirm_reset,
+        ).pack(side="right")
+
+    def _confirm_reset(self) -> None:
+        if self._reset_dialog is not None and self._reset_dialog.winfo_exists():
+            self._reset_dialog.destroy()
+        self._reset_dialog = None
+        self._reset_btn.configure(state="disabled", text="Resetting...")
+        self.bridge.reset_all()
 
     def _on_close(self) -> None:
         if hasattr(self, "_poll_job"):

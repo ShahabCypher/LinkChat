@@ -88,6 +88,7 @@ class WindowsBleTransport:
         client_factory: Callable[..., Any] | None = None,
     ) -> None:
         self._node_id_hex = node_id_hex.lower()
+        self._force_central_only = force_central_only
         self.central_only = force_central_only
         self.on_mode_changed = on_mode_changed
         self._scan_retry_sec = scan_retry_sec
@@ -161,6 +162,7 @@ class WindowsBleTransport:
             return
         self._started = True
         self._loop = asyncio.get_running_loop()
+        self._set_central_only(self._force_central_only)
 
         if not self.central_only:
             ok = await self._start_peripheral()
@@ -173,6 +175,7 @@ class WindowsBleTransport:
         if not self._started:
             return
         self._started = False
+        self._last_attempt.clear()
 
         if self._scan_task is not None:
             self._scan_task.cancel()
