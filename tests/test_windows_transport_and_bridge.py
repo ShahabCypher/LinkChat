@@ -565,3 +565,21 @@ async def test_windows_ble_transport_clears_attempt_cooldown_on_stop() -> None:
     transport._last_attempt["11:22:33:44:55:66"] = time.monotonic()
     await transport.stop()
     assert transport._last_attempt == {}
+
+
+def test_apply_window_icon_uses_bundled_ico() -> None:
+    from linkchat_win.ui.theme import apply_window_icon
+
+    class _FakeWin:
+        def __init__(self) -> None:
+            self.called_with: str | None = None
+
+        def iconbitmap(self, bitmap: str) -> None:
+            self.called_with = bitmap
+
+    win = _FakeWin()
+    apply_window_icon(win)
+    assert win.called_with is not None
+    ico_path = Path(win.called_with)
+    assert ico_path.is_file()
+    assert ico_path.read_bytes()[:4] == b"\x00\x00\x01\x00"

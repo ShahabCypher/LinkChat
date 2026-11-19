@@ -22,6 +22,7 @@ class VerifyDialog(ctk.CTkToplevel):
         on_verify: Callable[[str, bool], None],
     ) -> None:
         super().__init__(master)
+        theme.apply_window_icon(self)
         self._peer = peer
         self._on_verify = on_verify
 

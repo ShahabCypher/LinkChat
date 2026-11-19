@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 from datetime import datetime
+from pathlib import Path
+import sys
+from typing import Any
 
 from linkchat_core import DMStatus, PeerInfo
 
@@ -76,3 +79,20 @@ def format_dm_status(status: str) -> tuple[str, str]:
     if status == DMStatus.RELAYED.value:
         return "Relayed", ACCENT_CYAN
     return "Sending...", TEXT_MUTED
+
+
+def apply_window_icon(window: Any) -> None:
+    """Apply the LinkChat app icon to a Tk/CTk window on Windows."""
+    if not sys.platform.startswith("win"):
+        return
+    candidates = [Path(__file__).resolve().parent.parent / "assets" / "linkchat.ico"]
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        candidates.insert(0, Path(meipass) / "linkchat_win" / "assets" / "linkchat.ico")
+    for path in candidates:
+        if path.is_file():
+            try:
+                window.iconbitmap(str(path))
+            except Exception:
+                pass
+            return

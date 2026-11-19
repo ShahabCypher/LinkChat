@@ -29,6 +29,7 @@ class MainWindow:
         ctk.set_default_color_theme("blue")
 
         self.root = ctk.CTk()
+        theme.apply_window_icon(self.root)
         self.root.title("LinkChat — Offline BLE Mesh Messenger")
         self.root.geometry("1120x680")
         self.root.minsize(920, 560)
@@ -783,6 +784,7 @@ class MainWindow:
             return
 
         dlg = ctk.CTkToplevel(self.root)
+        theme.apply_window_icon(dlg)
         self._reset_dialog = dlg
         dlg.title("Reset Identity & Wipe Data")
         dlg.geometry("430x220")
