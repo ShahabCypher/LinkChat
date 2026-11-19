@@ -22,6 +22,9 @@ windows = [
     "bleak>=0.22",
     "bless>=0.2.6",
 ]
+build = [
+    "pyinstaller>=6.0",
+]
 
 [tool.setuptools]
 package-dir = { "linkchat_core" = "core/linkchat_core", "linkchat_sim" = "simulator/linkchat_sim", "linkchat_win" = "windows/linkchat_win", "linkchat_win.ui" = "windows/linkchat_win/ui" }

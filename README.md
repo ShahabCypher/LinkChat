@@ -7,7 +7,7 @@ Offline, decentralized Bluetooth Low Energy (BLE) mesh messenger for **Windows**
 - **Encrypted Direct Messages**: End-to-end encrypted 1-to-1 messaging (`X25519` + `HKDF-SHA256` + `ChaCha20-Poly1305`) with `DM_ACK` delivery receipts.
 - **Multi-Hop Mesh Relay**: TTL-bounded flooding with `(origin_id, msg_id)` deduplication (`Phone A <-> Laptop B <-> Phone C`).
 - **Live Peer Radar**: Discovered peers with `Direct` / `N hops` badges, RSSI signal strength, and verification status.
-- **Identity & Safety Fingerprints**: Zero-account `Ed25519` identity with TOFU key-change detection and symmetric 6-emoji / 30-digit safety verification.
+- **Identity & Safety Fingerprints**: Zero-account `Ed25519` identity with TOFU key-change detection, symmetric 6-emoji / 30-digit safety verification, and one-click **Reset Identity** wipe (overwrites and deletes local SQLite data, clears caches/logs, disconnects BLE, and rejoins as a brand-new `Node-<tag>`).
 - **Store-and-Forward Sync**: Local SQLite history plus `SYNC_DIGEST` / `SYNC_REQ` catch-up sync for reconnecting peers and queued offline DMs.
 - **Local Mesh Simulator**: Virtual Python radio simulator (`linkchat_sim`) for testing 5+ node topologies without physical Bluetooth hardware.
 
@@ -76,6 +76,13 @@ Launch the Windows GUI:
 
 ```powershell
 python -m linkchat_win --nickname WinLaptop
+```
+
+Build a standalone `dist\LinkChat.exe` executable with PyInstaller:
+
+```powershell
+pip install -e ".[dev,windows,build]"
+.\windows\build_win.ps1
 ```
 
 Useful CLI flags:

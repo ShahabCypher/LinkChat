@@ -1,6 +1,6 @@
-"""Module entrypoint for `python -m linkchat_win`."""
+"""Module and standalone entrypoint for LinkChat Windows."""
 
-from .app import main
+from linkchat_win.app import main
 
 if __name__ == "__main__":
     main()
