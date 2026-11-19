@@ -110,8 +110,8 @@ fun ChatScreen(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth(),
-                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 items(messages, key = { it.msgId }) { msg ->
                     MessageBubble(msg = msg, showSender = dmPeer == null)
@@ -261,7 +261,16 @@ private fun MessageBubble(
             shape = shape,
             modifier = Modifier.widthIn(max = 310.dp),
         ) {
-            Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+            val headerMetaStyle = MaterialTheme.typography.labelSmall.copy(lineHeight = 14.sp)
+            val footerStyle = MaterialTheme.typography.labelSmall.copy(
+                fontSize = 10.sp,
+                lineHeight = 12.sp,
+            )
+
+            Column(
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
                 if (!msg.isOutgoing && showSender) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
@@ -269,34 +278,32 @@ private fun MessageBubble(
                     ) {
                         Text(
                             text = msg.senderNick.ifBlank { msg.originId.take(4) },
-                            style = MaterialTheme.typography.labelMedium,
+                            style = MaterialTheme.typography.labelMedium.copy(lineHeight = 14.sp),
                             fontWeight = FontWeight.SemiBold,
                             color = LinkChatColors.AccentCyan,
                         )
                         Text(
                             text = "LC-${msg.originId.take(4)}",
-                            style = MaterialTheme.typography.labelSmall,
+                            style = headerMetaStyle,
                             fontFamily = FontFamily.Monospace,
                             color = LinkChatColors.TextMuted,
                         )
                         if (msg.hopCount > 0) {
                             Text(
                                 text = if (msg.hopCount == 1) "• direct" else "• ${msg.hopCount}h",
-                                style = MaterialTheme.typography.labelSmall,
+                                style = headerMetaStyle,
                                 color = LinkChatColors.TextMuted,
                             )
                         }
                     }
-                    Spacer(modifier = Modifier.size(2.dp))
                 }
 
                 Text(
                     text = msg.text,
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = MaterialTheme.typography.bodyMedium.copy(lineHeight = 18.sp),
                     color = LinkChatColors.TextPrimary,
                 )
 
-                Spacer(modifier = Modifier.size(4.dp))
                 Row(
                     modifier = Modifier.align(Alignment.End),
                     verticalAlignment = Alignment.CenterVertically,
@@ -304,7 +311,7 @@ private fun MessageBubble(
                 ) {
                     Text(
                         text = formatTime(msg.timestampMs),
-                        fontSize = 10.sp,
+                        style = footerStyle,
                         color = LinkChatColors.TextMuted,
                     )
                     if (msg.isOutgoing && msg.channel != "#public") {
@@ -315,7 +322,7 @@ private fun MessageBubble(
                         }
                         Text(
                             text = label,
-                            fontSize = 10.sp,
+                            style = footerStyle,
                             fontWeight = FontWeight.Medium,
                             color = color,
                         )
