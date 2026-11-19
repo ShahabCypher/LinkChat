@@ -362,7 +362,8 @@ class MainWindow:
                     self._append_raw_inspector(f"[ERROR] {ev.message}")
         except queue.Empty:
             pass
-        self._poll_job = self.root.after(POLL_INTERVAL_MS, self._poll_events)
+        finally:
+            self._poll_job = self.root.after(POLL_INTERVAL_MS, self._poll_events)
 
     def _on_node_ready(self, ev: Any) -> None:
         self._own_node_id = ev.node_id_hex

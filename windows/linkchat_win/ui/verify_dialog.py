@@ -127,10 +127,11 @@ class VerifyDialog(ctk.CTkToplevel):
         ctk.CTkButton(
             btn_row,
             text="Close",
+            width=90,
             fg_color=theme.BG_CARD,
             hover_color=theme.BG_CARD_ACTIVE,
             command=self.destroy,
-        ).pack(side="right", width=90)
+        ).pack(side="right")
 
     def _handle_verify(self, verified: bool) -> None:
         self._on_verify(self._peer.node_id_hex, verified)
