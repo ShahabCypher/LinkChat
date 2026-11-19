@@ -678,7 +678,7 @@ class MainWindow:
 
     def _append_message_bubble(self, rec: MessageRecord, row_idx: int) -> None:
         wrapper = ctk.CTkFrame(self._chat_scroll, fg_color="transparent", height=0)
-        wrapper.grid(row=row_idx, column=0, sticky="ew", pady=4)
+        wrapper.grid(row=row_idx, column=0, sticky="ew", pady=2)
         wrapper.grid_columnconfigure(0, weight=1)
 
         bubble_bg = theme.BG_MSG_OUT if rec.is_outgoing else theme.BG_MSG_IN
@@ -692,7 +692,7 @@ class MainWindow:
             border_color=theme.BORDER_SUBTLE,
             height=0,
         )
-        bubble.pack(anchor=anchor, padx=8, pady=2)
+        bubble.pack(anchor=anchor, padx=8, pady=1)
 
         hop_note = f" · {rec.hop_count}h" if rec.hop_count > 1 else ""
         meta = (
@@ -704,7 +704,8 @@ class MainWindow:
             text=meta,
             font=(theme.FONT_FAMILY, 10, "bold"),
             text_color=theme.TEXT_MUTED,
-        ).pack(anchor="w", padx=12, pady=(8, 2))
+            height=0,
+        ).pack(anchor="w", padx=10, pady=(6, 1))
 
         ctk.CTkLabel(
             bubble,
@@ -713,7 +714,8 @@ class MainWindow:
             text_color=theme.TEXT_PRIMARY,
             wraplength=520,
             justify="left",
-        ).pack(anchor="w", padx=12, pady=(0, 6))
+            height=0,
+        ).pack(anchor="w", padx=10, pady=(0, 2 if rec.is_outgoing else 6))
 
         if rec.is_outgoing:
             status_text, status_color = theme.format_dm_status(rec.status)
@@ -722,8 +724,9 @@ class MainWindow:
                 text=status_text,
                 font=(theme.FONT_FAMILY, 10),
                 text_color=status_color,
+                height=0,
             )
-            status_lbl.pack(anchor="e", padx=12, pady=(0, 6))
+            status_lbl.pack(anchor="e", padx=10, pady=(0, 5))
             self._status_labels[rec.msg_id] = status_lbl
 
     def _scroll_chat_to_bottom(self) -> None:
