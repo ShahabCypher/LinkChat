@@ -30,6 +30,7 @@ import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -288,6 +289,38 @@ fun LinkChatApp(
                         Button(onClick = onRequestPermissions) {
                             Text("Grant")
                         }
+                    }
+                }
+            }
+
+            val isConnecting = state.isReady &&
+                hasBlePermissions &&
+                state.bleStatus.bluetoothEnabled &&
+                (state.bleStatus.serviceRunning || state.bleStatus.scanning || state.bleStatus.advertising) &&
+                state.peers.none { it.connected }
+            if (isConnecting) {
+                Surface(
+                    color = LinkChatColors.AccentCyan.copy(alpha = 0.12f),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 14.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center,
+                    ) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(13.dp),
+                            strokeWidth = 2.dp,
+                            color = LinkChatColors.AccentCyan,
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Connecting to nearby peers...",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = LinkChatColors.AccentCyan,
+                        )
                     }
                 }
             }
