@@ -253,6 +253,54 @@ class PythonBridge(private val context: Context) {
         _lastError.value = null
     }
 
+    fun resetAllData(
+        onBeforeCoreReset: () -> Unit = {},
+        onAfterCoreReset: (String) -> Unit = {},
+    ) {
+        executor.execute {
+            try {
+                onBeforeCoreReset()
+                clearKotlinState()
+
+                if (!Python.isStarted()) {
+                    Python.start(AndroidPlatform(context.applicationContext))
+                }
+                val mod = module ?: Python.getInstance().getModule("bridge").also { module = it }
+                if (!started.get()) {
+                    val dataDir = context.filesDir.absolutePath
+                    mod.callAttr(
+                        "start",
+                        dataDir,
+                        TransportSink(),
+                        BridgeEventListener(),
+                        null,
+                    )
+                    started.set(true)
+                }
+
+                val resetJson = mod.callAttr("reset_all").toString()
+                handleEventJson(resetJson)
+                onAfterCoreReset(_shortTag.value)
+            } catch (t: Throwable) {
+                Log.e(TAG, "Failed to reset LinkChatNode", t)
+                _lastError.value = "Reset failed: ${t.message}"
+            }
+        }
+    }
+
+    private fun clearKotlinState() {
+        _isReady.value = false
+        _peers.value = emptyMap()
+        _messages.value = mapOf("#public" to emptyList())
+        _unreadCounts.value = emptyMap()
+        _meshLogs.value = emptyList()
+        loadedChannels.clear()
+        loadedChannels.add("#public")
+        activeChannel = "#public"
+        _lastError.value = null
+    }
+
+    @Synchronized
     private fun handleEventJson(eventJson: String) {
         try {
             val obj = JSONObject(eventJson)
@@ -279,6 +327,14 @@ class PythonBridge(private val context: Context) {
                     _messages.update { current ->
                         current + ("#public" to mergeMessages(pubMsgs, current["#public"].orEmpty()))
                     }
+                    _isReady.value = true
+                }
+
+                "node_reset" -> {
+                    clearKotlinState()
+                    _ownNodeId.value = obj.optString("node_id_hex")
+                    _shortTag.value = obj.optString("short_tag")
+                    _nickname.value = obj.optString("nickname", "Node-${_shortTag.value}")
                     _isReady.value = true
                 }
 

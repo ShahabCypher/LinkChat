@@ -316,3 +316,41 @@ def test_cross_platform_three_node_android_windows_android_multihop(tmp_path: Pa
         phone_a.stop()
         phone_b.stop()
         win_bridge.stop()
+
+
+def test_android_bridge_reset_all_rotates_identity_and_clears_history(
+    tmp_path: Path,
+) -> None:
+    bridge_inst = android_bridge.AndroidBridge()
+    collector = _EventCollector()
+    pipe = _PipeTransport(bridge_inst, "ble-c:AA:BB:CC:DD:EE:FF")
+
+    ready = json.loads(
+        bridge_inst.start(
+            data_dir=str(tmp_path / "android"),
+            transport_sink=pipe,
+            event_listener=collector,
+            nickname="PixelPhone",
+        )
+    )
+    try:
+        bridge_inst.send_public("before android reset")
+        asyncio.run(
+            _wait_event(collector, lambda e: e.get("type") == "public_message")
+        )
+        assert len(json.loads(bridge_inst.get_history("#public"))) == 1
+
+        reset_payload = json.loads(bridge_inst.reset_all())
+        assert reset_payload["type"] == "node_reset"
+        assert reset_payload["node_id_hex"] != ready["node_id_hex"]
+        assert reset_payload["short_tag"] == reset_payload["node_id_hex"][:4]
+        assert reset_payload["nickname"] == f"Node-{reset_payload['short_tag']}"
+        assert reset_payload["peers"] == []
+        assert reset_payload["public_history"] == []
+
+        own_info = json.loads(bridge_inst.get_own_info())
+        assert own_info["node_id_hex"] == reset_payload["node_id_hex"]
+        assert json.loads(bridge_inst.get_peers()) == []
+        assert json.loads(bridge_inst.get_history("#public")) == []
+    finally:
+        bridge_inst.stop()

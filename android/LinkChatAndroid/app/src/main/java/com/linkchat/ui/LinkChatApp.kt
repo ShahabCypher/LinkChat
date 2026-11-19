@@ -21,6 +21,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Bluetooth
 import androidx.compose.material.icons.filled.BugReport
+import androidx.compose.material.icons.filled.DeleteForever
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Forum
 import androidx.compose.material.icons.filled.People
@@ -28,6 +29,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -68,6 +70,7 @@ fun LinkChatApp(
     val state by viewModel.uiState.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
     var showNickDialog by remember { mutableStateOf(false) }
+    var showResetDialog by remember { mutableStateOf(false) }
 
     LaunchedEffect(state.lastError) {
         val err = state.lastError
@@ -194,6 +197,13 @@ fun LinkChatApp(
                                 color = pillColor,
                             )
                         }
+                    }
+                    IconButton(onClick = { showResetDialog = true }) {
+                        Icon(
+                            imageVector = Icons.Default.DeleteForever,
+                            contentDescription = "Reset Identity",
+                            tint = LinkChatColors.DangerRed,
+                        )
                     }
                 },
             )
@@ -341,6 +351,56 @@ fun LinkChatApp(
             },
         )
     }
+
+    if (showResetDialog) {
+        ResetConfirmDialog(
+            onDismiss = { showResetDialog = false },
+            onConfirm = {
+                showResetDialog = false
+                viewModel.resetAllData()
+            },
+        )
+    }
+}
+
+@Composable
+private fun ResetConfirmDialog(
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = LinkChatColors.BgPanel,
+        title = {
+            Text(
+                text = "Erase All Data & Reset Identity?",
+                color = LinkChatColors.DangerRed,
+                fontWeight = FontWeight.Bold,
+            )
+        },
+        text = {
+            Text(
+                text = "This permanently wipes your cryptographic keys, nickname, peers, trust records, blocked tags, and all chat history. You will rejoin the mesh as a brand-new user.",
+                color = LinkChatColors.TextMuted,
+            )
+        },
+        confirmButton = {
+            Button(
+                onClick = onConfirm,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = LinkChatColors.DangerRed,
+                    contentColor = LinkChatColors.TextPrimary,
+                ),
+            ) {
+                Text("Wipe & Reset")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        },
+    )
 }
 
 @Composable

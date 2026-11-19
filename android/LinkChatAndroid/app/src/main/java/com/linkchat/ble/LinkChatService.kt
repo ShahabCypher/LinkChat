@@ -71,6 +71,16 @@ class LinkChatService : Service() {
             },
         ).also { bleTransport = it }
 
+        app.bleResetHandler = object : LinkChatApplication.BleResetHandler {
+            override fun stopAndClearForReset() {
+                transport.stopAndClearForReset()
+            }
+
+            override fun restartAfterReset(newShortTag: String) {
+                transport.restartWithNewTag(newShortTag)
+            }
+        }
+
         if (!bluetoothReceiverRegistered) {
             registerReceiver(
                 bluetoothStateReceiver,
@@ -122,9 +132,10 @@ class LinkChatService : Service() {
             runCatching { unregisterReceiver(bluetoothStateReceiver) }
             bluetoothReceiverRegistered = false
         }
+        val app = application as? LinkChatApplication
+        app?.bleResetHandler = null
         bleTransport?.release()
         bleTransport = null
-        val app = application as? LinkChatApplication
         app?.updateBleStatus {
             it.copy(
                 serviceRunning = false,

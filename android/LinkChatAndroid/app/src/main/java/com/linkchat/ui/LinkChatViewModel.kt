@@ -202,6 +202,13 @@ class LinkChatViewModel(application: Application) : AndroidViewModel(application
         bridge.clearError()
     }
 
+    fun resetAllData() {
+        activeDmPeerId.value = null
+        activeTab.value = MainTab.PUBLIC
+        verifyState.value = null
+        app.resetAllData()
+    }
+
     private data class CorePart(
         val ready: Boolean,
         val ownId: String,

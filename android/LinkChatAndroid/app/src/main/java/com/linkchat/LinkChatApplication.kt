@@ -9,6 +9,11 @@ import kotlinx.coroutines.flow.asStateFlow
 
 class LinkChatApplication : Application() {
 
+    interface BleResetHandler {
+        fun stopAndClearForReset()
+        fun restartAfterReset(newShortTag: String)
+    }
+
     lateinit var pythonBridge: PythonBridge
         private set
 
@@ -17,6 +22,9 @@ class LinkChatApplication : Application() {
 
     val blockedTags = MutableStateFlow<Set<String>>(emptySet())
 
+    @Volatile
+    var bleResetHandler: BleResetHandler? = null
+
     override fun onCreate() {
         super.onCreate()
         pythonBridge = PythonBridge(this)
@@ -24,5 +32,14 @@ class LinkChatApplication : Application() {
 
     fun updateBleStatus(transform: (BleStatus) -> BleStatus) {
         _bleStatus.value = transform(_bleStatus.value)
+    }
+
+    fun resetAllData() {
+        blockedTags.value = emptySet()
+        val handler = bleResetHandler
+        pythonBridge.resetAllData(
+            onBeforeCoreReset = { handler?.stopAndClearForReset() },
+            onAfterCoreReset = { newTag -> handler?.restartAfterReset(newTag) },
+        )
     }
 }

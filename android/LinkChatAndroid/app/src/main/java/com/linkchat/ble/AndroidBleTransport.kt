@@ -26,6 +26,7 @@ import android.content.Context
 import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
+import android.os.Looper
 import android.os.ParcelUuid
 import android.util.Log
 import com.linkchat.bridge.PythonBridge
@@ -33,6 +34,8 @@ import com.linkchat.model.BleStatus
 import com.linkchat.model.PermissionHelper
 import java.util.ArrayDeque
 import java.util.UUID
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 object LinkChatGattProfile {
     val SERVICE_UUID: UUID = UUID.fromString("7b4e1000-8f2a-4c3b-9d1e-4c696e6b4368")
@@ -231,6 +234,40 @@ class AndroidBleTransport(
             statusNote = "Stopped"
             emitStatus()
         }
+    }
+
+    fun stopAndClearForReset() {
+        val task = Runnable {
+            started = false
+            pythonBridge.setChunkSender(null)
+            stopRadioOnly()
+            lastConnectAttemptMs.clear()
+            knownMtuByAddress.clear()
+            tagByAddress.clear()
+            tagByHandle.clear()
+            blockedTags = emptySet()
+            statusNote = "Resetting..."
+            emitStatus()
+        }
+        if (Looper.myLooper() == opsThread.looper) {
+            task.run()
+            return
+        }
+        val latch = CountDownLatch(1)
+        val posted = opsHandler.post {
+            try {
+                task.run()
+            } finally {
+                latch.countDown()
+            }
+        }
+        if (posted) {
+            latch.await(1_500L, TimeUnit.MILLISECONDS)
+        }
+    }
+
+    fun restartWithNewTag(shortTag: String) {
+        start(shortTag)
     }
 
     fun release() {

@@ -400,6 +400,32 @@ class AndroidBridge:
         )
         return json.dumps(info, ensure_ascii=False)
 
+    def reset_all(self) -> str:
+        async def _do_reset(node: LinkChatNode) -> dict[str, Any]:
+            await node.reset_all()
+            ready_payload = {
+                "type": "node_ready",
+                "node_id_hex": node.node_id_hex,
+                "short_tag": node.short_tag,
+                "nickname": node.nickname,
+                "peers": [],
+                "public_history": [],
+            }
+            self._ready_json = json.dumps(ready_payload, ensure_ascii=False)
+            reset_payload = {
+                "type": "node_reset",
+                "node_id_hex": node.node_id_hex,
+                "short_tag": node.short_tag,
+                "nickname": node.nickname,
+                "peers": [],
+                "public_history": [],
+            }
+            self._emit(reset_payload)
+            return reset_payload
+
+        payload = self._call_sync(_do_reset, timeout=10.0)
+        return json.dumps(payload, ensure_ascii=False)
+
 
 _default_bridge = AndroidBridge()
 
@@ -463,3 +489,7 @@ def get_safety_fingerprint(node_id_hex: str) -> str:
 
 def get_own_info() -> str:
     return _default_bridge.get_own_info()
+
+
+def reset_all() -> str:
+    return _default_bridge.reset_all()
