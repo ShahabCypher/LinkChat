@@ -204,8 +204,6 @@ private fun PeerCard(
 
                     if (peer.keyChanged) {
                         Pill(text = "Key Changed!", color = LinkChatColors.DangerRed)
-                    } else if (peer.verified) {
-                        Pill(text = "Verified ✓", color = LinkChatColors.VerifiedGreen)
                     }
 
                     if (isBlocked) {
