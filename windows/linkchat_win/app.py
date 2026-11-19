@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import logging
 import os
 import queue
 import threading
@@ -313,6 +314,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def run_app(argv: list[str] | None = None) -> int:
     from .ui.main_window import MainWindow
 
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    )
     args = parse_args(argv)
     bridge = BackendBridge(
         data_dir=args.data_dir,

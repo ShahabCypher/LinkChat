@@ -35,13 +35,25 @@ def parse_linkchat_tag(local_name: str | None) -> str | None:
     return None
 
 
+def _extract_service_data_label(adv: AdvertisementData) -> str | None:
+    service_data = getattr(adv, "service_data", None) or {}
+    for uuid_str, raw in service_data.items():
+        if str(uuid_str).lower() == SERVICE_UUID.lower():
+            try:
+                return bytes(raw).decode("utf-8", errors="ignore")
+            except TypeError:
+                return None
+    return None
+
+
 def _is_linkchat_adv(device: BLEDevice, adv: AdvertisementData) -> bool:
     service_match = any(
         s.lower() == SERVICE_UUID.lower() for s in (adv.service_uuids or [])
     )
     if service_match:
         return True
-    return parse_linkchat_tag(adv.local_name or device.name) is not None
+    label = _extract_service_data_label(adv) or adv.local_name or device.name
+    return parse_linkchat_tag(label) is not None
 
 
 @dataclass(slots=True)
@@ -300,8 +312,8 @@ class WindowsBleTransport:
         if now - self._last_attempt.get(addr, 0.0) < self._connect_cooldown_sec:
             return
 
-        local_name = adv.local_name or device.name
-        if not self.should_initiate_central(local_name):
+        remote_label = _extract_service_data_label(adv) or adv.local_name or device.name
+        if not self.should_initiate_central(remote_label):
             return
 
         self._last_attempt[addr] = now
@@ -328,9 +340,6 @@ class WindowsBleTransport:
                     await client.disconnect()
                 return
 
-            raw_mtu = getattr(client, "mtu_size", DEFAULT_MTU) or DEFAULT_MTU
-            mtu = max(DEFAULT_MTU, min(int(raw_mtu), MAX_WIN_MTU))
-
             def _on_notify(_char: Any, data: bytearray) -> None:
                 if self._on_chunk is None:
                     return
@@ -346,6 +355,8 @@ class WindowsBleTransport:
                 with contextlib.suppress(Exception):
                     await client.disconnect()
                 return
+            raw_mtu = getattr(client, "mtu_size", DEFAULT_MTU) or DEFAULT_MTU
+            mtu = max(DEFAULT_MTU, min(int(raw_mtu), MAX_WIN_MTU))
             self._central_links[handle] = _CentralLink(
                 handle=handle,
                 address=addr,
@@ -453,6 +464,7 @@ class WindowsBleTransport:
                 GattLocalCharacteristicParameters,
                 GattProtectionLevel,
                 GattServiceProvider,
+                GattServiceProviderAdvertisementStatus,
                 GattServiceProviderAdvertisingParameters,
                 GattWriteOption,
             )
@@ -555,7 +567,18 @@ class WindowsBleTransport:
             adv_params = GattServiceProviderAdvertisingParameters()
             adv_params.is_discoverable = True
             adv_params.is_connectable = True
-            provider.start_advertising_with_parameters(adv_params)
+            provider.start_advertising(adv_params)
+            await asyncio.sleep(0.25)
+            if provider.advertisement_status not in (
+                GattServiceProviderAdvertisementStatus.STARTED,
+                GattServiceProviderAdvertisementStatus.STARTED_WITHOUT_ALL_ADVERTISEMENT_DATA,
+            ):
+                logger.warning(
+                    "WinRT BLE Peripheral advertising rejected (status=%s); falling back to Central-only",
+                    provider.advertisement_status,
+                )
+                await self._stop_peripheral()
+                return False
             logger.info("BLE Peripheral started via WinRT GattServiceProvider")
             return True
         except Exception as exc:
@@ -607,15 +630,20 @@ class WindowsBleTransport:
             return
 
         if self._winrt_tx_char is not None:
+            from winrt.windows.devices.bluetooth.genericattributeprofile import (
+                GattCommunicationStatus,
+            )
             from winrt.windows.storage.streams import DataWriter
 
             writer = DataWriter()
             writer.write_bytes(chunk)
             buf = writer.detach_buffer()
             if link.subscribed_client is not None:
-                await self._winrt_tx_char.notify_value_for_subscribed_client_async(
+                res = await self._winrt_tx_char.notify_value_async(
                     buf, link.subscribed_client
                 )
+                if res.status != GattCommunicationStatus.SUCCESS:
+                    raise ConnectionError(f"WinRT notify failed: {res.status}")
             else:
                 await self._winrt_tx_char.notify_value_async(buf)
 

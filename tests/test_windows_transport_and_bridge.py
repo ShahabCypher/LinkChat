@@ -37,6 +37,7 @@ class _FakeDevice:
 class _FakeAdv:
     local_name: str | None = None
     service_uuids: list[str] | None = None
+    service_data: dict[str, bytes] | None = None
     rssi: int | None = -62
 
 
@@ -411,5 +412,63 @@ async def test_disconnected_central_and_failing_peripheral_drop_on_send() -> Non
             await transport.send_chunk(p_handle, b"pong")
         assert p_handle in down_events
         assert p_handle not in transport._peripheral_links
+    finally:
+        await transport.stop()
+
+
+async def test_android_service_data_tag_respected_by_windows_tie_breaker() -> None:
+    scanners: list[_FakeScanner] = []
+    clients: list[_FakeClient] = []
+
+    transport = WindowsBleTransport(
+        "5000deadbeef0000",
+        scanner_factory=lambda **kw: scanners.append(_FakeScanner(**kw)) or scanners[-1],
+        client_factory=lambda dev, **kw: clients.append(_FakeClient(dev, **kw)) or clients[-1],
+    )
+
+    async def ok_peripheral() -> bool:
+        return True
+
+    transport._start_peripheral = ok_peripheral  # type: ignore[method-assign]
+
+    async def noop_up(_h: str, _m: int, _r: int) -> None:
+        pass
+
+    async def noop_down(_h: str) -> None:
+        pass
+
+    async def noop_chunk(_h: str, _d: bytes) -> None:
+        pass
+
+    transport.set_callbacks(noop_up, noop_down, noop_chunk)
+    await transport.start()
+    try:
+        await asyncio.sleep(0.02)
+
+        # Android advertises LC-<4hex> in ScanResponse service_data with no local_name.
+        smaller_android = _FakeDevice(address="11:11:11:11:11:11", name="Pixel 8")
+        smaller_adv = _FakeAdv(
+            local_name=None,
+            service_uuids=[SERVICE_UUID],
+            service_data={SERVICE_UUID.upper(): b"LC-1000"},
+            rssi=-55,
+        )
+        scanners[0].detection_callback(smaller_android, smaller_adv)
+        await asyncio.sleep(0.05)
+        # 5000 > 1000 -> Windows backs off and lets Android initiate Central.
+        assert len(clients) == 0
+
+        larger_android = _FakeDevice(address="22:22:22:22:22:22", name="Pixel 9")
+        larger_adv = _FakeAdv(
+            local_name=None,
+            service_uuids=[SERVICE_UUID],
+            service_data={SERVICE_UUID: b"LC-9000"},
+            rssi=-58,
+        )
+        scanners[0].detection_callback(larger_android, larger_adv)
+        await asyncio.sleep(0.05)
+        # 5000 <= 9000 -> Windows initiates Central connection.
+        assert len(clients) == 1
+        assert clients[0].device.address == "22:22:22:22:22:22"
     finally:
         await transport.stop()
