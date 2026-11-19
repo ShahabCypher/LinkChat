@@ -325,6 +325,7 @@ class AndroidBleTransport(
 
         for (pLink in peripheralLinks.values.toList()) {
             pLink.watchdogRunnable?.let { opsHandler.removeCallbacks(it) }
+            runCatching { gattServer?.cancelConnection(pLink.device) }
             if (pLink.linkUpNotified) {
                 pythonBridge.onLinkDown(pLink.handle)
             }

@@ -380,3 +380,131 @@ async def test_three_node_direct_drop_recovers_via_relay_and_delivers_dm(
     finally:
         for node in nodes.values():
             await node.stop()
+
+
+async def test_reset_does_not_resurrect_old_identity_as_multihop_peer(
+    tmp_path: Path,
+) -> None:
+    """After wiping data, neither the wiped node nor peers may see old identity as online/X-hops."""
+    hub = NetworkHub()
+    names = ["Alice", "Bob", "Carol"]
+    nodes: dict[str, LinkChatNode] = {}
+
+    for n in names:
+        node = LinkChatNode(
+            tmp_path / n,
+            VirtualTransport(n, hub),
+            nickname=n,
+            jitter_range=(0.002, 0.005),
+        )
+        await node.start()
+        nodes[n] = node
+
+    try:
+        await hub.connect("Alice", "Bob", latency_ms=2.0)
+        await hub.connect("Bob", "Carol", latency_ms=2.0)
+        await hub.connect("Alice", "Carol", latency_ms=2.0)
+        await _wait_until(lambda: all(len(n.get_peers()) == 2 for n in nodes.values()))
+
+        alice = nodes["Alice"]
+        bob = nodes["Bob"]
+        carol = nodes["Carol"]
+        old_alice_id = alice.node_id
+
+        # Send a public message before reset so peers cache it too.
+        await alice.send_public("hello from old alice")
+        await _wait_until(
+            lambda: len(bob.router.public_cache) == 1
+            and len(carol.router.public_cache) == 1
+        )
+
+        # Simulate Bob having a stale/lagging direct link to old Alice when Alice resets.
+        await alice.reset_all()
+
+        await _wait_until(
+            lambda: alice.node_id in bob.router.peers
+            and alice.node_id in carol.router.peers
+            and len(alice.get_peers()) == 2
+        )
+        # Wait past _schedule_hello_refresh (0.25s) and forwarding jitter.
+        await asyncio.sleep(0.4)
+
+        # Wiped node must only see Bob and Carol, never its own old identity.
+        alice_peer_ids = {p.node_id for p in alice.get_peers()}
+        assert alice_peer_ids == {bob.node_id, carol.node_id}
+        assert old_alice_id not in alice_peer_ids
+        assert all(p.connected and p.direct and p.hop_count == 1 for p in alice.get_peers())
+
+        # Other peers must keep old Alice offline and show new Alice direct (1 hop).
+        for peer_node in (bob, carol):
+            old_entry = peer_node.router.peers[old_alice_id]
+            new_entry = peer_node.router.peers[alice.node_id]
+            assert old_entry.connected is False
+            assert old_entry.direct is False
+            assert new_entry.connected is True
+            assert new_entry.direct is True
+            assert new_entry.hop_count == 1
+    finally:
+        for node in nodes.values():
+            await node.stop()
+
+
+async def test_retired_identity_and_sync_replay_do_not_show_offline_peer_online(
+    tmp_path: Path,
+) -> None:
+    """Lagging HELLO or SYNC_REPLAY of an offline peer's message must not mark it online."""
+    hub = NetworkHub()
+    alice = LinkChatNode(
+        tmp_path / "Alice",
+        VirtualTransport("Alice", hub),
+        nickname="Alice",
+        jitter_range=(0.002, 0.005),
+    )
+    bob = LinkChatNode(
+        tmp_path / "Bob",
+        VirtualTransport("Bob", hub),
+        nickname="Bob",
+        jitter_range=(0.002, 0.005),
+    )
+    carol = LinkChatNode(
+        tmp_path / "Carol",
+        VirtualTransport("Carol", hub),
+        nickname="Carol",
+        jitter_range=(0.002, 0.005),
+    )
+    await alice.start()
+    await bob.start()
+    await carol.start()
+    try:
+        await hub.connect("Alice", "Bob", latency_ms=2.0)
+        await _wait_until(lambda: len(alice.get_peers()) == 1 and len(bob.get_peers()) == 1)
+
+        old_alice_id = alice.node_id
+        old_hello = bob.router._known_hellos[old_alice_id]
+        pub_msg = await alice.send_public("cached before carol joined")
+        await _wait_until(lambda: len(bob.router.public_cache) == 1)
+
+        # Alice resets; simulate a lagging peer still relaying Alice's old HELLO to Alice_new.
+        await alice.reset_all()
+        await _wait_until(lambda: len(alice.get_peers()) == 1)
+
+        from linkchat_core.protocol import decode_packet, packet_with_hop
+
+        old_pkt = decode_packet(old_hello)
+        relayed_old_hello = packet_with_hop(
+            old_hello, ttl=old_pkt.header.ttl - 1, hop=old_pkt.header.hop + 1
+        )
+        await alice.router._handle_packet("Bob", relayed_old_hello)
+        assert old_alice_id not in alice.router.peers
+
+        # On Carol, old_alice_id is known but offline; SYNC_REPLAY from Bob must not mark old_alice_id online.
+        carol.router.peers[old_alice_id] = bob.router.peers[old_alice_id]
+        assert carol.router.peers[old_alice_id].connected is False
+        await hub.connect("Bob", "Carol", latency_ms=2.0)
+        await _wait_until(lambda: len(carol.get_history("#public")) == 1)
+        assert carol.get_history("#public")[0].msg_id == pub_msg.msg_id
+        assert carol.router.peers[old_alice_id].connected is False
+    finally:
+        await alice.stop()
+        await bob.stop()
+        await carol.stop()

@@ -86,6 +86,7 @@ class MeshRouter:
         self._known_hellos: dict[bytes, bytes] = {}  # origin_id -> latest raw HELLO
         self._pending_public: set[bytes] = set()
         self._min_public_ts_ms: int = self.storage.get_min_public_ts_ms()
+        self._retired_node_ids: set[bytes] = set()
         self._requested_sync_ids: OrderedDict[bytes, float] = OrderedDict()
         self._ignored_sync_ids: OrderedDict[bytes, float] = OrderedDict()
         self._forward_tasks: set[asyncio.Task[None]] = set()
@@ -144,6 +145,8 @@ class MeshRouter:
 
     def reset_state(self, identity: Identity, nickname: str) -> None:
         """Clear all in-memory routing, peer, and cache state for a new identity."""
+        if self.identity.node_id != identity.node_id:
+            self._retired_node_ids.add(self.identity.node_id)
         self.identity = identity
         self.nickname = nickname
         self._last_hello_at = time.monotonic()
@@ -202,6 +205,7 @@ class MeshRouter:
                     and (now - peer.last_seen) > self.stale_timeout_sec
                 ):
                     peer.connected = False
+                    self._known_hellos.pop(peer.node_id, None)
                     await self._emit(self.on_peer_updated, peer)
             if self.links and (time.monotonic() - self._last_hello_at) >= self.hello_interval_sec:
                 await self.broadcast_hello()
@@ -284,6 +288,7 @@ class MeshRouter:
                     peer.direct = False
                     peer.connected = False
                     peer.link_handle = None
+                    self._known_hellos.pop(link.peer_node_id, None)
                     if self._started and self.links:
                         self._schedule_hello_refresh()
                 await self._emit(self.on_peer_updated, peer)
@@ -301,7 +306,7 @@ class MeshRouter:
             return
 
         hdr = pkt.header
-        if hdr.origin_id == self.identity.node_id:
+        if hdr.origin_id == self.identity.node_id or hdr.origin_id in self._retired_node_ids:
             return
 
         if self.seen_cache.check_and_add(hdr.origin_id, hdr.msg_id):
@@ -350,8 +355,10 @@ class MeshRouter:
         link = self.links.get(from_handle)
         existing = self.peers.get(hdr.origin_id)
         is_direct = hdr.hop == 0
+        is_new_link_peer = False
 
         if is_direct and link is not None:
+            is_new_link_peer = link.peer_node_id != hdr.origin_id
             link.peer_node_id = hdr.origin_id
             hop_count = 1
             rssi = link.rssi
@@ -402,7 +409,7 @@ class MeshRouter:
             ttl=hdr.ttl,
         )
 
-        if is_direct:
+        if is_direct and is_new_link_peer:
             await self._share_known_hellos(from_handle, exclude_origin=hdr.origin_id)
             await self._send_sync_digest(from_handle)
 
@@ -427,6 +434,9 @@ class MeshRouter:
         """Forward cached peer HELLO packets so newly connected peers learn the mesh."""
         for origin_id, raw_hello in list(self._known_hellos.items()):
             if origin_id == exclude_origin or origin_id == self.identity.node_id:
+                continue
+            peer = self.peers.get(origin_id)
+            if peer is None or not peer.connected:
                 continue
             try:
                 cached = decode_packet(raw_hello)
@@ -502,7 +512,7 @@ class MeshRouter:
             )
             return
 
-        if self._update_relayed_reachability(peer, hdr.hop):
+        if not is_sync_replay and self._update_relayed_reachability(peer, hdr.hop):
             await self._emit(self.on_peer_updated, peer)
             await self._flush_outbound_dms(peer.node_id)
         self.public_cache.add(hdr.msg_id, raw_packet)
