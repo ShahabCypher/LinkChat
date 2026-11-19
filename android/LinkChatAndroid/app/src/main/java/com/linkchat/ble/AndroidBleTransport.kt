@@ -255,7 +255,6 @@ class AndroidBleTransport(
 
     private fun startPeripheral() {
         val mgr = bluetoothManager ?: return
-        val adapter = bluetoothAdapter ?: return
         try {
             val server = mgr.openGattServer(context, gattServerCallback)
             if (server == null) {
@@ -289,39 +288,49 @@ class AndroidBleTransport(
 
             service.addCharacteristic(rxChar)
             service.addCharacteristic(txChar)
-            server.addService(service)
-
-            val bleAdv = adapter.bluetoothLeAdvertiser
-            if (bleAdv == null) {
-                Log.w(TAG, "BluetoothLeAdvertiser unavailable; Central-Only mode")
-                return
+            val added = server.addService(service)
+            if (!added) {
+                Log.w(TAG, "gattServer.addService returned false")
             }
-            advertiser = bleAdv
-
-            val settings = AdvertiseSettings.Builder()
-                .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_BALANCED)
-                .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_MEDIUM)
-                .setConnectable(true)
-                .setTimeout(0)
-                .build()
-
-            // Keep primary ADV packet <= 21B (Flags 3B + 128-bit UUID 18B) and put LC-<4hex> in ScanResponse.
-            val advData = AdvertiseData.Builder()
-                .setIncludeDeviceName(false)
-                .setIncludeTxPowerLevel(false)
-                .addServiceUuid(ParcelUuid(LinkChatGattProfile.SERVICE_UUID))
-                .build()
-
-            val tagBytes = "LC-$localTag".toByteArray(Charsets.UTF_8)
-            val scanResp = AdvertiseData.Builder()
-                .setIncludeDeviceName(false)
-                .setIncludeTxPowerLevel(false)
-                .addServiceData(ParcelUuid(LinkChatGattProfile.SERVICE_UUID), tagBytes)
-                .build()
-
-            bleAdv.startAdvertising(settings, advData, scanResp, advertiseCallback)
         } catch (t: Throwable) {
             Log.w(TAG, "Failed to start BLE Peripheral", t)
+        }
+    }
+
+    private fun startAdvertising() {
+        val adapter = bluetoothAdapter ?: return
+        val bleAdv = adapter.bluetoothLeAdvertiser
+        if (bleAdv == null) {
+            Log.w(TAG, "BluetoothLeAdvertiser unavailable; Central-Only mode")
+            return
+        }
+        advertiser = bleAdv
+
+        val settings = AdvertiseSettings.Builder()
+            .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_BALANCED)
+            .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_MEDIUM)
+            .setConnectable(true)
+            .setTimeout(0)
+            .build()
+
+        // Keep primary ADV packet <= 21B (Flags 3B + 128-bit UUID 18B) and put LC-<4hex> in ScanResponse.
+        val advData = AdvertiseData.Builder()
+            .setIncludeDeviceName(false)
+            .setIncludeTxPowerLevel(false)
+            .addServiceUuid(ParcelUuid(LinkChatGattProfile.SERVICE_UUID))
+            .build()
+
+        val tagBytes = "LC-$localTag".toByteArray(Charsets.UTF_8)
+        val scanResp = AdvertiseData.Builder()
+            .setIncludeDeviceName(false)
+            .setIncludeTxPowerLevel(false)
+            .addServiceData(ParcelUuid(LinkChatGattProfile.SERVICE_UUID), tagBytes)
+            .build()
+
+        runCatching {
+            bleAdv.startAdvertising(settings, advData, scanResp, advertiseCallback)
+        }.onFailure {
+            Log.w(TAG, "startAdvertising threw", it)
         }
     }
 
@@ -345,6 +354,16 @@ class AndroidBleTransport(
     }
 
     private val gattServerCallback = object : BluetoothGattServerCallback() {
+        override fun onServiceAdded(status: Int, service: BluetoothGattService) {
+            opsHandler.post {
+                if (started && status == BluetoothGatt.GATT_SUCCESS &&
+                    service.uuid == LinkChatGattProfile.SERVICE_UUID
+                ) {
+                    startAdvertising()
+                }
+            }
+        }
+
         override fun onConnectionStateChange(device: BluetoothDevice, status: Int, newState: Int) {
             opsHandler.post {
                 val handle = peripheralHandle(device.address)
