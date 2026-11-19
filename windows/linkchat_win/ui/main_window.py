@@ -599,7 +599,7 @@ class MainWindow:
         self._scroll_chat_to_bottom()
 
     def _append_message_bubble(self, rec: MessageRecord, row_idx: int) -> None:
-        wrapper = ctk.CTkFrame(self._chat_scroll, fg_color="transparent")
+        wrapper = ctk.CTkFrame(self._chat_scroll, fg_color="transparent", height=0)
         wrapper.grid(row=row_idx, column=0, sticky="ew", pady=4)
         wrapper.grid_columnconfigure(0, weight=1)
 
@@ -612,6 +612,7 @@ class MainWindow:
             corner_radius=10,
             border_width=1,
             border_color=theme.BORDER_SUBTLE,
+            height=0,
         )
         bubble.pack(anchor=anchor, padx=8, pady=2)
 
@@ -648,9 +649,19 @@ class MainWindow:
             self._status_labels[rec.msg_id] = status_lbl
 
     def _scroll_chat_to_bottom(self) -> None:
-        self.root.after_idle(
-            lambda: self._chat_scroll._parent_canvas.yview_moveto(1.0)
-        )
+        def _apply() -> None:
+            if not self._chat_scroll.winfo_exists():
+                return
+            self._chat_scroll.update_idletasks()
+            canvas = self._chat_scroll._parent_canvas
+            bbox = canvas.bbox("all")
+            canvas.configure(scrollregion=bbox if bbox else (0, 0, 0, 0))
+            if self._chat_scroll.winfo_reqheight() <= canvas.winfo_height():
+                canvas.yview_moveto(0.0)
+            else:
+                canvas.yview_moveto(1.0)
+
+        self.root.after_idle(_apply)
 
     def _append_inspector_log(self, entry: LogEntry) -> None:
         ts = theme.format_log_timestamp(entry.timestamp_ms)
