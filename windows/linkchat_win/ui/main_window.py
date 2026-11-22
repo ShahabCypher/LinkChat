@@ -58,6 +58,7 @@ class MainWindow:
         self._active_channel = "#public"
         self._inspector_visible = False
         self._peers: dict[str, PeerInfo] = {}
+        self._blocked_tags: set[str] = set()
         self._peer_cards: dict[str, dict[str, Any]] = {}
         self._rendered_peer_order: list[str] = []
         self._empty_radar_label: ctk.CTkLabel | None = None
@@ -735,6 +736,7 @@ class MainWindow:
         self._nickname = ev.nickname
         self._active_channel = "#public"
         self._peers.clear()
+        self._blocked_tags.clear()
         self._messages = {"#public": []}
         self._seen_msg_ids = {"#public": set()}
         self._unread_counts.clear()
@@ -871,7 +873,7 @@ class MainWindow:
 
         bottom = ctk.CTkFrame(card, fg_color="transparent")
         bottom.grid(row=1, column=0, sticky="ew", padx=10, pady=(0, 8))
-        bottom.grid_columnconfigure(0 if rtl else 1, weight=1)
+        bottom.grid_columnconfigure(1, weight=1)
 
         hop_lbl = ctk.CTkLabel(
             bottom,
@@ -881,7 +883,7 @@ class MainWindow:
         )
         hop_lbl.grid(
             row=0,
-            column=1 if rtl else 0,
+            column=2 if rtl else 0,
             sticky="e" if rtl else "w",
         )
 
@@ -893,7 +895,23 @@ class MainWindow:
         )
         rssi_lbl.grid(
             row=0,
-            column=0 if rtl else 1,
+            column=1,
+            sticky="w" if rtl else "e",
+            padx=6,
+        )
+
+        block_btn = ctk.CTkButton(
+            bottom,
+            text="",
+            width=54,
+            height=20,
+            corner_radius=6,
+            font=theme.ui_font(lang, 10, "bold"),
+            command=lambda tag=peer.node_id_hex[:4]: self._toggle_block_tag(tag),
+        )
+        block_btn.grid(
+            row=0,
+            column=0 if rtl else 2,
             sticky="w" if rtl else "e",
         )
 
@@ -909,6 +927,7 @@ class MainWindow:
             "trust_lbl": trust_lbl,
             "hop_lbl": hop_lbl,
             "rssi_lbl": rssi_lbl,
+            "block_btn": block_btn,
         }
         self._update_peer_card(widgets, peer)
         return widgets
@@ -940,6 +959,38 @@ class MainWindow:
                 theme.format_rssi(peer.rssi, peer.direct, peer.connected, lang), rtl
             )
         )
+
+        block_btn = widgets.get("block_btn")
+        if block_btn is not None:
+            short_tag = peer.node_id_hex[:4].lower()
+            is_blocked = short_tag in getattr(self, "_blocked_tags", set())
+            if is_blocked:
+                block_btn.configure(
+                    text=bidi_text(tr(lang, "blocked_btn"), rtl),
+                    fg_color="#78350F",
+                    hover_color="#92400E",
+                    text_color="#FCD34D",
+                    command=lambda tag=short_tag: self._toggle_block_tag(tag),
+                )
+            else:
+                block_btn.configure(
+                    text=bidi_text(tr(lang, "block_btn"), rtl),
+                    fg_color=theme.BG_PANEL,
+                    hover_color=theme.BORDER_SUBTLE,
+                    text_color=theme.TEXT_MUTED,
+                    command=lambda tag=short_tag: self._toggle_block_tag(tag),
+                )
+
+    def _toggle_block_tag(self, short_tag: str) -> None:
+        clean = short_tag.strip().lower()
+        if len(clean) != 4 or not all(ch in "0123456789abcdef" for ch in clean):
+            return
+        if clean in self._blocked_tags:
+            self._blocked_tags.remove(clean)
+        else:
+            self._blocked_tags.add(clean)
+        self.bridge.set_blocked_tags(set(self._blocked_tags))
+        self._refresh_peer_radar()
 
     @staticmethod
     def _trust_badge(peer: PeerInfo) -> tuple[str, str]:
