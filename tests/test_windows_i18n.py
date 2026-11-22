@@ -29,6 +29,15 @@ def test_persian_detection_and_bidi_helpers() -> None:
     assert i18n.detect_rtl("123 سلام") is True
     assert i18n.detect_rtl("123", default_rtl=True) is True
 
+    assert i18n.is_rtl_text("Hello سلام:", default_rtl=False) is True
+    assert i18n.is_rtl_text("Hello world", default_rtl=True) is False
+    assert i18n.is_rtl_text("123", default_rtl=True) is True
+
+    assert i18n.bidi_text("نام:", True) == "\u202Bنام:\u202C"
+    assert i18n.bidi_text("سلام:\nخوبی؟", True) == "\u202Bسلام:\u202C\n\u202Bخوبی؟\u202C"
+    assert i18n.bidi_text("Hello", False) == "Hello"
+    assert i18n.wrap_text_for_width("aa bb cc", len, 5) == "aa bb\ncc"
+
 
 def test_message_font_uses_vazirmatn_for_persian_chars_in_both_modes() -> None:
     assert theme.message_font("Hello", "en", 13)[0] == theme.FONT_FAMILY

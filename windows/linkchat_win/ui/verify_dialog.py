@@ -57,7 +57,7 @@ class VerifyDialog(ctk.CTkToplevel):
         id_row.pack(fill="x", padx=16, pady=(0, 10))
         ctk.CTkLabel(
             id_row,
-            text=tr(lang, "node_id_prefix"),
+            text=bidi_text(tr(lang, "node_id_prefix"), rtl),
             font=theme.ui_font(lang, 11),
             text_color=theme.TEXT_MUTED,
         ).pack(side="right" if rtl else "left", padx=(4 if rtl else 0, 0 if rtl else 4))
@@ -71,20 +71,26 @@ class VerifyDialog(ctk.CTkToplevel):
         if peer.key_changed:
             warn = ctk.CTkFrame(container, fg_color="#451A1A", corner_radius=8)
             warn.pack(fill="x", padx=16, pady=(0, 10))
-            ctk.CTkLabel(
+            warn_lbl = ctk.CTkLabel(
                 warn,
-                text=bidi_text(tr(lang, "verify_key_changed_warn"), rtl),
+                text="",
                 font=theme.ui_font(lang, 12, "bold"),
                 text_color="#FCA5A5",
                 wraplength=390,
                 justify="right" if rtl else "left",
-            ).pack(padx=10, pady=8)
+            )
+            warn_lbl.configure(
+                text=theme.bidi_label_text(
+                    warn_lbl, tr(lang, "verify_key_changed_warn"), rtl
+                )
+            )
+            warn_lbl.pack(padx=10, pady=8)
 
         emoji_box = ctk.CTkFrame(container, fg_color=theme.BG_CARD, corner_radius=10)
         emoji_box.pack(fill="x", padx=16, pady=(0, 10))
         ctk.CTkLabel(
             emoji_box,
-            text=tr(lang, "emoji_fp_label"),
+            text=bidi_text(tr(lang, "emoji_fp_label"), rtl),
             font=theme.ui_font(lang, 11),
             text_color=theme.TEXT_MUTED,
         ).pack(pady=(8, 2))
@@ -99,7 +105,7 @@ class VerifyDialog(ctk.CTkToplevel):
         num_box.pack(fill="x", padx=16, pady=(0, 12))
         ctk.CTkLabel(
             num_box,
-            text=tr(lang, "safety_num_label"),
+            text=bidi_text(tr(lang, "safety_num_label"), rtl),
             font=theme.ui_font(lang, 11),
             text_color=theme.TEXT_MUTED,
         ).pack(pady=(8, 2))
@@ -129,7 +135,7 @@ class VerifyDialog(ctk.CTkToplevel):
 
         ctk.CTkButton(
             btn_row,
-            text=btn_text,
+            text=bidi_text(btn_text, rtl),
             fg_color=btn_color,
             hover_color=theme.ACCENT_BLUE_HOVER,
             text_color="#0B1117",
@@ -144,7 +150,7 @@ class VerifyDialog(ctk.CTkToplevel):
 
         ctk.CTkButton(
             btn_row,
-            text=tr(lang, "close"),
+            text=bidi_text(tr(lang, "close"), rtl),
             width=90,
             fg_color=theme.BG_CARD,
             hover_color=theme.BG_CARD_ACTIVE,

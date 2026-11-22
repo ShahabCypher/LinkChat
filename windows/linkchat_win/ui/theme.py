@@ -5,13 +5,14 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 import sys
+import tkinter.font as tkfont
 from typing import Any
 
 import customtkinter as ctk
 
 from linkchat_core import DMStatus, PeerInfo
 
-from ..i18n import DEFAULT_LANG, Lang, contains_persian, tr
+from ..i18n import DEFAULT_LANG, Lang, bidi_text, contains_persian, tr, wrap_text_for_width
 
 BG_ROOT = "#0F141B"
 BG_PANEL = "#161D26"
@@ -125,6 +126,20 @@ def format_dm_status(status: str, lang: Lang = DEFAULT_LANG) -> tuple[str, str]:
     if status == DMStatus.RELAYED.value:
         return tr(lang, "dm_relayed"), ACCENT_CYAN
     return tr(lang, "dm_sending"), TEXT_MUTED
+
+
+def bidi_label_text(label: ctk.CTkLabel, text: str, rtl: bool) -> str:
+    """Pre-wrap RTL text to label's pixel wraplength so every wrapped line keeps RLE/PDF."""
+    if not rtl or not text:
+        return text
+    try:
+        wrap_px = int(float(label._label.cget("wraplength") or 0))
+        if wrap_px > 8:
+            font = tkfont.Font(root=label, font=label._label.cget("font"))
+            text = wrap_text_for_width(text, font.measure, wrap_px - 6)
+    except Exception:
+        pass
+    return bidi_text(text, True)
 
 
 def apply_window_icon(window: Any) -> None:

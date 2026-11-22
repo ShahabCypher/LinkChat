@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import unicodedata
 from typing import Literal
 
@@ -182,12 +183,50 @@ def detect_rtl(text: str, default_rtl: bool = False) -> bool:
     return default_rtl
 
 
+def is_rtl_text(text: str, default_rtl: bool = False) -> bool:
+    """Return True when text contains Persian script, else infer from first strong char."""
+    if contains_persian(text):
+        return True
+    return detect_rtl(text, default_rtl=default_rtl)
+
+
+def wrap_text_for_width(
+    text: str, measure: Callable[[str], int], max_width: int
+) -> str:
+    """Wrap text on spaces so each line fits max_width and keeps its own BiDi run."""
+    if max_width <= 0 or not text:
+        return text
+    lines: list[str] = []
+    for para in text.split("\n"):
+        if not para:
+            lines.append("")
+            continue
+        words = para.split(" ")
+        cur = words[0]
+        for word in words[1:]:
+            candidate = f"{cur} {word}"
+            if measure(candidate) <= max_width:
+                cur = candidate
+            else:
+                lines.append(cur)
+                cur = word
+        lines.append(cur)
+    return "\n".join(lines)
+
+
+def _wrap_rtl_line(line: str) -> str:
+    if not line:
+        return line
+    if line.startswith(_RLE) and line.endswith(_PDF):
+        return line
+    stripped = line.lstrip(_RLM)
+    if stripped.startswith(_RLE) and stripped.endswith(_PDF):
+        return stripped
+    return f"{_RLE}{stripped}{_PDF}"
+
+
 def bidi_text(text: str, rtl: bool) -> str:
-    """Apply subtle RTL embedding so mixed Persian + ASCII tokens order cleanly in Tk."""
+    """Wrap each line in RLE/PDF so Windows Tk renders Persian punctuation and mixed tokens RTL."""
     if not rtl or not text:
         return text
-    if text.startswith((_RLE, _RLM)):
-        return text
-    if not detect_rtl(text):
-        return f"{_RLE}{text}{_PDF}"
-    return f"{_RLM}{text}"
+    return "\n".join(_wrap_rtl_line(line) for line in text.split("\n"))

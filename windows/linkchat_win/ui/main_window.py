@@ -15,7 +15,7 @@ from ..i18n import (
     Lang,
     bidi_text,
     contains_persian,
-    detect_rtl,
+    is_rtl_text,
     tr,
     translate_mode_label,
 )
@@ -116,7 +116,7 @@ class MainWindow:
 
         brand_lbl = ctk.CTkLabel(
             bar,
-            text=tr(lang, "app_name"),
+            text=bidi_text(tr(lang, "app_name"), rtl),
             font=theme.ui_font(lang, 17, "bold"),
             text_color=theme.ACCENT_CYAN,
         )
@@ -139,9 +139,10 @@ class MainWindow:
             padx=(12, 0) if rtl else (0, 12),
         )
 
+        mode_text = self._format_mode_text()
         self._mode_badge = ctk.CTkLabel(
             bar,
-            text=self._format_mode_text(),
+            text=bidi_text(mode_text, is_rtl_text(mode_text, rtl)),
             font=theme.ui_font(lang, 11, "bold"),
             text_color="#0B1117",
             fg_color=self._mode_badge_color(),
@@ -157,7 +158,7 @@ class MainWindow:
 
         self._connecting_badge = ctk.CTkLabel(
             bar,
-            text=tr(lang, "connecting"),
+            text=bidi_text(tr(lang, "connecting"), rtl),
             font=theme.ui_font(lang, 11, "bold"),
             text_color=theme.ACCENT_CYAN,
             fg_color=theme.BG_CARD,
@@ -182,7 +183,7 @@ class MainWindow:
 
         nick_lbl = ctk.CTkLabel(
             nick_wrap,
-            text=tr(lang, "nickname_label"),
+            text=bidi_text(tr(lang, "nickname_label"), rtl),
             font=theme.ui_font(lang, 12),
             text_color=theme.TEXT_MUTED,
         )
@@ -192,7 +193,7 @@ class MainWindow:
             fg_color=theme.BG_INPUT,
             border_color=theme.BORDER_SUBTLE,
             font=theme.ui_font(lang, 12),
-            justify="right" if rtl else "left",
+            justify="right" if is_rtl_text(self._nickname, rtl) else "left",
         )
         if self._nickname:
             self._nick_entry.insert(0, self._nickname)
@@ -200,7 +201,7 @@ class MainWindow:
 
         save_btn = ctk.CTkButton(
             nick_wrap,
-            text=tr(lang, "save"),
+            text=bidi_text(tr(lang, "save"), rtl),
             width=64,
             fg_color=theme.BG_CARD,
             hover_color=theme.BG_CARD_ACTIVE,
@@ -234,7 +235,7 @@ class MainWindow:
 
         self._inspector_btn = ctk.CTkButton(
             bar,
-            text=tr(lang, "inspector_btn"),
+            text=bidi_text(tr(lang, "inspector_btn"), rtl),
             width=120,
             fg_color=theme.ACCENT_BLUE if self._inspector_visible else theme.BG_CARD,
             hover_color=theme.BG_CARD_ACTIVE,
@@ -249,7 +250,9 @@ class MainWindow:
 
         self._reset_btn = ctk.CTkButton(
             bar,
-            text=tr(lang, "resetting" if self._resetting else "reset_identity"),
+            text=bidi_text(
+                tr(lang, "resetting" if self._resetting else "reset_identity"), rtl
+            ),
             width=116,
             fg_color="#7F1D1D",
             hover_color="#991B1B",
@@ -346,7 +349,7 @@ class MainWindow:
 
         self._verify_btn = ctk.CTkButton(
             header,
-            text=tr(lang, "verify_safety"),
+            text=bidi_text(tr(lang, "verify_safety"), rtl),
             width=110,
             height=28,
             fg_color=theme.BG_CARD,
@@ -388,7 +391,7 @@ class MainWindow:
 
         self._msg_entry = ctk.CTkEntry(
             composer,
-            placeholder_text=tr(lang, "msg_placeholder_public"),
+            placeholder_text=bidi_text(tr(lang, "msg_placeholder_public"), rtl),
             height=38,
             fg_color=theme.BG_INPUT,
             border_color=theme.BORDER_SUBTLE,
@@ -407,7 +410,7 @@ class MainWindow:
 
         ctk.CTkButton(
             composer,
-            text=tr(lang, "send"),
+            text=bidi_text(tr(lang, "send"), rtl),
             width=88,
             height=38,
             fg_color=theme.ACCENT_BLUE,
@@ -442,13 +445,13 @@ class MainWindow:
         hdr.grid(row=0, column=0, sticky="ew", padx=12, pady=(10, 4))
         ctk.CTkLabel(
             hdr,
-            text=tr(lang, "inspector_header"),
+            text=bidi_text(tr(lang, "inspector_header"), rtl),
             font=theme.ui_font(lang, 11, "bold"),
             text_color=theme.TEXT_MUTED,
         ).pack(side="right" if rtl else "left")
         ctk.CTkButton(
             hdr,
-            text=tr(lang, "clear"),
+            text=bidi_text(tr(lang, "clear"), rtl),
             width=64,
             height=24,
             fg_color=theme.BG_CARD,
@@ -528,7 +531,7 @@ class MainWindow:
             rtl = self._is_rtl
             target_font = theme.ui_font(self._lang, 13)
         else:
-            rtl = detect_rtl(text, default_rtl=self._is_rtl)
+            rtl = is_rtl_text(text, default_rtl=self._is_rtl)
             target_font = theme.message_font(text, self._lang, 13)
         target_justify = "right" if rtl else "left"
         if self._msg_entry.cget("justify") != target_justify:
@@ -581,7 +584,8 @@ class MainWindow:
                 elif isinstance(ev, ErrorEvent):
                     self._resetting = False
                     self._reset_btn.configure(
-                        state="normal", text=tr(self._lang, "reset_identity")
+                        state="normal",
+                        text=bidi_text(tr(self._lang, "reset_identity"), self._is_rtl),
                     )
                     self._append_raw_inspector(f"[ERROR] {ev.message}")
         except queue.Empty:
@@ -627,8 +631,9 @@ class MainWindow:
     def _update_mode_badge(self, central_only: bool, label: str) -> None:
         self._central_only = central_only
         self._raw_mode_label = label
+        mode_text = self._format_mode_text()
         self._mode_badge.configure(
-            text=self._format_mode_text(),
+            text=bidi_text(mode_text, is_rtl_text(mode_text, self._is_rtl)),
             fg_color=self._mode_badge_color(),
         )
 
@@ -687,7 +692,7 @@ class MainWindow:
         lbl = self._status_labels.get(msg_id)
         if lbl is not None and lbl.winfo_exists():
             text, color = theme.format_dm_status(status, self._lang)
-            lbl.configure(text=text, text_color=color)
+            lbl.configure(text=bidi_text(text, self._is_rtl), text_color=color)
 
     def _on_history_loaded(self, channel: str, messages: list[MessageRecord]) -> None:
         self._loaded_channels.add(channel)
@@ -721,7 +726,10 @@ class MainWindow:
         self._reset_dialog = None
 
         self._resetting = False
-        self._reset_btn.configure(state="normal", text=tr(self._lang, "reset_identity"))
+        self._reset_btn.configure(
+            state="normal",
+            text=bidi_text(tr(self._lang, "reset_identity"), self._is_rtl),
+        )
         self._own_node_id = ev.node_id_hex
         self._short_tag = ev.short_tag
         self._nickname = ev.nickname
@@ -791,7 +799,7 @@ class MainWindow:
             self._clear_peer_radar_widgets()
             self._empty_radar_label = ctk.CTkLabel(
                 self._peer_list_frame,
-                text=tr(lang, "scanning_peers"),
+                text=bidi_text(tr(lang, "scanning_peers"), rtl),
                 font=theme.ui_font(lang, 12),
                 text_color=theme.TEXT_DIM,
             )
@@ -917,7 +925,7 @@ class MainWindow:
         unread_text = f" [{unread}]" if unread else ""
         name_text = f"{peer.nickname} ({peer.node_id_hex[:4]}){unread_text}"
         widgets["name_lbl"].configure(
-            text=bidi_text(name_text, rtl),
+            text=bidi_text(name_text, rtl or contains_persian(peer.nickname)),
             font=theme.message_font(peer.nickname, lang, 12, "bold"),
         )
 
@@ -925,10 +933,12 @@ class MainWindow:
         widgets["trust_lbl"].configure(text=trust_icon, text_color=trust_color)
 
         hop_text, hop_color = theme.format_hop_badge(peer, lang)
-        widgets["hop_lbl"].configure(text=hop_text, text_color=hop_color)
+        widgets["hop_lbl"].configure(text=bidi_text(hop_text, rtl), text_color=hop_color)
 
         widgets["rssi_lbl"].configure(
-            text=theme.format_rssi(peer.rssi, peer.direct, peer.connected, lang)
+            text=bidi_text(
+                theme.format_rssi(peer.rssi, peer.direct, peer.connected, lang), rtl
+            )
         )
 
     @staticmethod
@@ -959,7 +969,7 @@ class MainWindow:
                 text=tr(lang, "public_channel_title"),
                 font=theme.ui_font("en", 14, "bold"),
             )
-            self._set_msg_placeholder(tr(lang, "msg_placeholder_public"))
+            self._set_msg_placeholder(bidi_text(tr(lang, "msg_placeholder_public"), rtl))
             self._verify_btn.grid_remove()
             self._key_warning_banner.grid_remove()
             return
@@ -991,7 +1001,9 @@ class MainWindow:
             ),
             font=theme.ui_font(lang, 14, "bold"),
         )
-        self._set_msg_placeholder(tr(lang, "msg_placeholder_dm", nick=peer.nickname))
+        self._set_msg_placeholder(
+            bidi_text(tr(lang, "msg_placeholder_dm", nick=peer.nickname), rtl)
+        )
         self._verify_btn.grid()
         if peer.key_changed:
             self._key_warning_banner.grid()
@@ -1043,16 +1055,18 @@ class MainWindow:
             height=0,
         ).pack(anchor="e" if meta_rtl else "w", padx=10, pady=(6, 1))
 
-        msg_rtl = detect_rtl(rec.text, default_rtl=rtl)
-        ctk.CTkLabel(
+        msg_rtl = is_rtl_text(rec.text, default_rtl=rtl)
+        msg_lbl = ctk.CTkLabel(
             bubble,
-            text=bidi_text(rec.text, msg_rtl),
+            text="",
             font=theme.message_font(rec.text, lang, 13),
             text_color=theme.TEXT_PRIMARY,
             wraplength=520,
             justify="right" if msg_rtl else "left",
             height=0,
-        ).pack(
+        )
+        msg_lbl.configure(text=theme.bidi_label_text(msg_lbl, rec.text, msg_rtl))
+        msg_lbl.pack(
             anchor="e" if msg_rtl else "w",
             padx=10,
             pady=(0, 2 if rec.is_outgoing else 6),
@@ -1062,7 +1076,7 @@ class MainWindow:
             status_text, status_color = theme.format_dm_status(rec.status, lang)
             status_lbl = ctk.CTkLabel(
                 bubble,
-                text=status_text,
+                text=bidi_text(status_text, rtl),
                 font=theme.ui_font(lang, 10),
                 text_color=status_color,
                 height=0,
@@ -1181,26 +1195,30 @@ class MainWindow:
 
         ctk.CTkLabel(
             box,
-            text=tr(lang, "reset_dlg_heading"),
+            text=bidi_text(tr(lang, "reset_dlg_heading"), rtl),
             font=theme.ui_font(lang, 15, "bold"),
             text_color="#FCA5A5",
         ).pack(anchor="e" if rtl else "w", padx=16, pady=(14, 6))
 
-        ctk.CTkLabel(
+        body_lbl = ctk.CTkLabel(
             box,
-            text=bidi_text(tr(lang, "reset_dlg_body"), rtl),
+            text="",
             font=theme.ui_font(lang, 12),
             text_color=theme.TEXT_MUTED,
             wraplength=375,
             justify="right" if rtl else "left",
-        ).pack(anchor="e" if rtl else "w", padx=16, pady=(0, 16))
+        )
+        body_lbl.configure(
+            text=theme.bidi_label_text(body_lbl, tr(lang, "reset_dlg_body"), rtl)
+        )
+        body_lbl.pack(anchor="e" if rtl else "w", padx=16, pady=(0, 16))
 
         actions = ctk.CTkFrame(box, fg_color="transparent")
         actions.pack(fill="x", padx=16, pady=(0, 12))
 
         ctk.CTkButton(
             actions,
-            text=tr(lang, "cancel"),
+            text=bidi_text(tr(lang, "cancel"), rtl),
             width=100,
             fg_color=theme.BG_CARD,
             hover_color=theme.BG_CARD_ACTIVE,
@@ -1210,7 +1228,7 @@ class MainWindow:
 
         ctk.CTkButton(
             actions,
-            text=tr(lang, "wipe_reset"),
+            text=bidi_text(tr(lang, "wipe_reset"), rtl),
             width=140,
             fg_color="#DC2626",
             hover_color="#B91C1C",
@@ -1224,7 +1242,9 @@ class MainWindow:
             self._reset_dialog.destroy()
         self._reset_dialog = None
         self._resetting = True
-        self._reset_btn.configure(state="disabled", text=tr(self._lang, "resetting"))
+        self._reset_btn.configure(
+            state="disabled", text=bidi_text(tr(self._lang, "resetting"), self._is_rtl)
+        )
         self.bridge.reset_all()
 
     def _on_close(self) -> None:
