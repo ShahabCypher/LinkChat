@@ -18,7 +18,9 @@ import com.linkchat.LinkChatApplication
 import com.linkchat.MainActivity
 import com.linkchat.R
 import com.linkchat.model.BleStatus
+import com.linkchat.model.BleStatusKind
 import com.linkchat.model.PermissionHelper
+import com.linkchat.ui.stringsFor
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -32,6 +34,7 @@ class LinkChatService : Service() {
     private var bleTransport: AndroidBleTransport? = null
     private var blockedTagsJob: Job? = null
     private var peerTagsJob: Job? = null
+    private var languageJob: Job? = null
     private var bluetoothReceiverRegistered = false
 
     private val bluetoothStateReceiver = object : BroadcastReceiver() {
@@ -59,9 +62,10 @@ class LinkChatService : Service() {
             return START_NOT_STICKY
         }
 
-        startForegroundCompat(buildNotification("Starting LinkChat BLE mesh..."))
-
         val app = application as LinkChatApplication
+        val currentStrings = stringsFor(app.language.value)
+        startForegroundCompat(buildNotification(currentStrings.notifStarting))
+
         val transport = bleTransport ?: AndroidBleTransport(
             context = this,
             pythonBridge = app.pythonBridge,
@@ -108,6 +112,13 @@ class LinkChatService : Service() {
             }
         }
 
+        languageJob?.cancel()
+        languageJob = serviceScope.launch {
+            app.language.collect {
+                updateNotification(formatNotificationText(app.bleStatus.value))
+            }
+        }
+
         app.pythonBridge.start(onReady = { shortTag ->
             transport.start(shortTag)
         })
@@ -128,6 +139,8 @@ class LinkChatService : Service() {
         blockedTagsJob = null
         peerTagsJob?.cancel()
         peerTagsJob = null
+        languageJob?.cancel()
+        languageJob = null
         if (bluetoothReceiverRegistered) {
             runCatching { unregisterReceiver(bluetoothStateReceiver) }
             bluetoothReceiverRegistered = false
@@ -144,6 +157,8 @@ class LinkChatService : Service() {
                 centralLinks = 0,
                 peripheralLinks = 0,
                 statusNote = "Stopped",
+                statusKind = BleStatusKind.STOPPED,
+                errorCode = null,
             )
         }
     }
@@ -180,12 +195,13 @@ class LinkChatService : Service() {
     }
 
     private fun formatNotificationText(status: BleStatus): String {
+        val strings = stringsFor((application as LinkChatApplication).language.value)
         val links = status.totalLinks
-        val peerText = if (links == 1) "1 direct link" else "$links direct links"
-        return "${status.statusNote} • $peerText"
+        return "${strings.notifStatus(status)} • ${strings.notifDirectLinks(links)}"
     }
 
     private fun buildNotification(text: String): Notification {
+        val strings = stringsFor((application as LinkChatApplication).language.value)
         val openIntent = PendingIntent.getActivity(
             this,
             0,
@@ -203,11 +219,11 @@ class LinkChatService : Service() {
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
-            .setContentTitle("LinkChat BLE Mesh")
+            .setContentTitle(strings.notifTitle)
             .setContentText(text)
             .setOngoing(true)
             .setContentIntent(openIntent)
-            .addAction(0, "Stop", stopIntent)
+            .addAction(0, strings.notifStop, stopIntent)
             .build()
     }
 

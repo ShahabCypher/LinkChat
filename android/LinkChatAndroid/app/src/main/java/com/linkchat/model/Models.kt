@@ -47,6 +47,17 @@ data class FingerprintModel(
     val emojis: List<String>,
 )
 
+enum class BleStatusKind {
+    IDLE,
+    MISSING_PERMISSIONS,
+    BLUETOOTH_OFF,
+    DUAL_ROLE,
+    CENTRAL_ONLY,
+    ADV_ERROR,
+    RESETTING,
+    STOPPED,
+}
+
 data class BleStatus(
     val serviceRunning: Boolean = false,
     val advertising: Boolean = false,
@@ -55,6 +66,8 @@ data class BleStatus(
     val peripheralLinks: Int = 0,
     val bluetoothEnabled: Boolean = true,
     val statusNote: String = "Idle",
+    val statusKind: BleStatusKind = BleStatusKind.IDLE,
+    val errorCode: Int? = null,
 ) {
     val totalLinks: Int get() = centralLinks + peripheralLinks
 }

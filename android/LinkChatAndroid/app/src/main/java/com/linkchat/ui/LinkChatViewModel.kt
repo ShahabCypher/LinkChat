@@ -38,6 +38,7 @@ data class LinkChatUiState(
     val blockedTags: Set<String> = emptySet(),
     val verifyState: VerifyDialogState? = null,
     val lastError: String? = null,
+    val language: AppLanguage = AppLanguage.DEFAULT,
 ) {
     val activeChannel: String
         get() = activeDmPeerId ?: "#public"
@@ -86,8 +87,9 @@ class LinkChatViewModel(application: Application) : AndroidViewModel(application
         activeDmPeerId,
         verifyState,
         app.blockedTags,
-    ) { tab, dmId, verify, blocked ->
-        NavPart(tab, dmId, verify, blocked)
+        app.language,
+    ) { tab, dmId, verify, blocked, lang ->
+        NavPart(tab, dmId, verify, blocked, lang)
     }
 
     val uiState: StateFlow<LinkChatUiState> = combine(
@@ -120,6 +122,7 @@ class LinkChatViewModel(application: Application) : AndroidViewModel(application
             blockedTags = nav.blocked,
             verifyState = refreshedVerify,
             lastError = chat.err,
+            language = nav.lang,
         )
     }.stateIn(
         scope = viewModelScope,
@@ -209,6 +212,10 @@ class LinkChatViewModel(application: Application) : AndroidViewModel(application
         app.resetAllData()
     }
 
+    fun toggleLanguage() {
+        app.toggleLanguage()
+    }
+
     private data class CorePart(
         val ready: Boolean,
         val ownId: String,
@@ -230,5 +237,6 @@ class LinkChatViewModel(application: Application) : AndroidViewModel(application
         val dmId: String?,
         val verify: VerifyDialogState?,
         val blocked: Set<String>,
+        val lang: AppLanguage,
     )
 }

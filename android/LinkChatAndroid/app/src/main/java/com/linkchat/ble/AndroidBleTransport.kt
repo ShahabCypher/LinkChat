@@ -31,6 +31,7 @@ import android.os.ParcelUuid
 import android.util.Log
 import com.linkchat.bridge.PythonBridge
 import com.linkchat.model.BleStatus
+import com.linkchat.model.BleStatusKind
 import com.linkchat.model.PermissionHelper
 import java.util.ArrayDeque
 import java.util.UUID
@@ -122,6 +123,8 @@ class AndroidBleTransport(
     private var advertisingActive = false
     private var scanningActive = false
     private var statusNote = "Idle"
+    private var statusKind = BleStatusKind.IDLE
+    private var statusErrorCode: Int? = null
 
     private val centralLinks = LinkedHashMap<String, CentralLink>() // key = handle
     private val centralByAddress = LinkedHashMap<String, CentralLink>() // key = MAC
@@ -191,12 +194,16 @@ class AndroidBleTransport(
 
             if (!PermissionHelper.hasBlePermissions(context)) {
                 statusNote = "Missing BLE permissions"
+                statusKind = BleStatusKind.MISSING_PERMISSIONS
+                statusErrorCode = null
                 emitStatus()
                 return@post
             }
             val adapter = bluetoothAdapter
             if (adapter == null || !adapter.isEnabled) {
                 statusNote = "Bluetooth is off"
+                statusKind = BleStatusKind.BLUETOOTH_OFF
+                statusErrorCode = null
                 emitStatus()
                 return@post
             }
@@ -204,6 +211,8 @@ class AndroidBleTransport(
             startPeripheral()
             startScanning()
             statusNote = if (advertisingActive) "Dual-Role active" else "Central-Only active"
+            statusKind = if (advertisingActive) BleStatusKind.DUAL_ROLE else BleStatusKind.CENTRAL_ONLY
+            statusErrorCode = null
             emitStatus()
         }
     }
@@ -214,13 +223,18 @@ class AndroidBleTransport(
             stopRadioOnly()
             val adapter = bluetoothAdapter
             if (adapter == null || !adapter.isEnabled || !PermissionHelper.hasBlePermissions(context)) {
-                statusNote = if (adapter?.isEnabled == true) "Missing BLE permissions" else "Bluetooth is off"
+                val noPerms = adapter?.isEnabled == true
+                statusNote = if (noPerms) "Missing BLE permissions" else "Bluetooth is off"
+                statusKind = if (noPerms) BleStatusKind.MISSING_PERMISSIONS else BleStatusKind.BLUETOOTH_OFF
+                statusErrorCode = null
                 emitStatus()
                 return@post
             }
             startPeripheral()
             startScanning()
             statusNote = if (advertisingActive) "Dual-Role active" else "Central-Only active"
+            statusKind = if (advertisingActive) BleStatusKind.DUAL_ROLE else BleStatusKind.CENTRAL_ONLY
+            statusErrorCode = null
             emitStatus()
         }
     }
@@ -232,6 +246,8 @@ class AndroidBleTransport(
             pythonBridge.setChunkSender(null)
             stopRadioOnly()
             statusNote = "Stopped"
+            statusKind = BleStatusKind.STOPPED
+            statusErrorCode = null
             emitStatus()
         }
     }
@@ -247,6 +263,8 @@ class AndroidBleTransport(
             tagByHandle.clear()
             blockedTags = emptySet()
             statusNote = "Resetting..."
+            statusKind = BleStatusKind.RESETTING
+            statusErrorCode = null
             emitStatus()
         }
         if (Looper.myLooper() == opsThread.looper) {
@@ -427,6 +445,8 @@ class AndroidBleTransport(
             opsHandler.post {
                 advertisingActive = true
                 statusNote = "Dual-Role active"
+                statusKind = BleStatusKind.DUAL_ROLE
+                statusErrorCode = null
                 emitStatus()
             }
         }
@@ -436,6 +456,8 @@ class AndroidBleTransport(
             opsHandler.post {
                 advertisingActive = false
                 statusNote = "Central-Only (adv err $errorCode)"
+                statusKind = BleStatusKind.ADV_ERROR
+                statusErrorCode = errorCode
                 emitStatus()
             }
         }
@@ -951,6 +973,8 @@ class AndroidBleTransport(
                 peripheralLinks = peripheralLinks.size,
                 bluetoothEnabled = adapterEnabled,
                 statusNote = statusNote,
+                statusKind = statusKind,
+                errorCode = statusErrorCode,
             )
         )
     }
