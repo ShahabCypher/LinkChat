@@ -47,6 +47,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -55,8 +56,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextDirection
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import com.linkchat.model.MainTab
 
@@ -69,6 +73,7 @@ fun LinkChatApp(
     onStartMeshService: () -> Unit,
 ) {
     val state by viewModel.uiState.collectAsState()
+    val strings = LocalStrings.current
     val snackbarHostState = remember { SnackbarHostState() }
     var showNickDialog by remember { mutableStateOf(false) }
     var showResetDialog by remember { mutableStateOf(false) }
@@ -96,7 +101,7 @@ fun LinkChatApp(
                         IconButton(onClick = viewModel::closeDm) {
                             Icon(
                                 Icons.AutoMirrored.Filled.ArrowBack,
-                                contentDescription = "Back",
+                                contentDescription = strings.back,
                             )
                         }
                     }
@@ -106,15 +111,24 @@ fun LinkChatApp(
                     if (dmPeer != null) {
                         Column {
                             Text(
-                                text = dmPeer.nickname,
+                                text = styledBidiText(dmPeer.nickname),
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.Bold,
                             )
-                            Text(
-                                text = "LC-${dmPeer.shortTag} • ${if (dmPeer.direct) "Direct" else "${dmPeer.hopCount} hops"}",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = LinkChatColors.TextMuted,
-                            )
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                                    Text(
+                                        text = "LC-${dmPeer.shortTag}",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = LinkChatColors.TextMuted,
+                                    )
+                                }
+                                Text(
+                                    text = " • ${if (dmPeer.direct) strings.directLabel else strings.hopsLabel(dmPeer.hopCount)}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = LinkChatColors.TextMuted,
+                                )
+                            }
                         }
                     } else {
                         Column(
@@ -122,29 +136,31 @@ fun LinkChatApp(
                         ) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text(
-                                    text = "LinkChat",
+                                    text = strings.appName,
                                     style = MaterialTheme.typography.titleMedium,
                                     fontWeight = FontWeight.Bold,
                                     color = LinkChatColors.AccentCyan,
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))
-                                Text(
-                                    text = "LC-${state.shortTag}",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontFamily = FontFamily.Monospace,
-                                    color = LinkChatColors.TextMuted,
-                                )
+                                CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                                    Text(
+                                        text = "LC-${state.shortTag}",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontFamily = FontFamily.Monospace,
+                                        color = LinkChatColors.TextMuted,
+                                    )
+                                }
                             }
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text(
-                                    text = state.nickname,
+                                    text = styledBidiText(state.nickname),
                                     style = MaterialTheme.typography.labelMedium,
                                     color = LinkChatColors.TextPrimary,
                                 )
                                 Spacer(modifier = Modifier.width(4.dp))
                                 Icon(
                                     imageVector = Icons.Default.Edit,
-                                    contentDescription = "Edit nickname",
+                                    contentDescription = strings.editNickname,
                                     tint = LinkChatColors.TextMuted,
                                     modifier = Modifier.size(12.dp),
                                 )
@@ -153,6 +169,23 @@ fun LinkChatApp(
                     }
                 },
                 actions = {
+                    Surface(
+                        color = LinkChatColors.BgCard,
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier
+                            .padding(end = 6.dp)
+                            .clickable(onClick = viewModel::toggleLanguage),
+                    ) {
+                        Text(
+                            text = strings.langToggleLabel,
+                            style = MaterialTheme.typography.labelSmall,
+                            fontFamily = if (state.language == AppLanguage.EN) VazirmatnFontFamily else null,
+                            fontWeight = FontWeight.Bold,
+                            color = LinkChatColors.TextPrimary,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                        )
+                    }
+
                     val pillColor = when {
                         !hasBlePermissions -> LinkChatColors.WarningAmber
                         !state.bleStatus.bluetoothEnabled -> LinkChatColors.DangerRed
@@ -161,17 +194,17 @@ fun LinkChatApp(
                         else -> LinkChatColors.TextMuted
                     }
                     val pillLabel = when {
-                        !hasBlePermissions -> "Permissions"
-                        !state.bleStatus.bluetoothEnabled -> "BT Off"
-                        state.bleStatus.advertising -> "Dual-Role"
-                        state.bleStatus.scanning -> "Central"
-                        else -> "Idle"
+                        !hasBlePermissions -> strings.blePermissions
+                        !state.bleStatus.bluetoothEnabled -> strings.bleBtOff
+                        state.bleStatus.advertising -> strings.bleDualRole
+                        state.bleStatus.scanning -> strings.bleCentral
+                        else -> strings.bleIdle
                     }
                     Surface(
                         color = pillColor.copy(alpha = 0.16f),
                         shape = RoundedCornerShape(10.dp),
                         modifier = Modifier
-                            .padding(end = 12.dp)
+                            .padding(end = 4.dp)
                             .clickable {
                                 if (!hasBlePermissions) {
                                     onRequestPermissions()
@@ -202,7 +235,7 @@ fun LinkChatApp(
                     IconButton(onClick = { showResetDialog = true }) {
                         Icon(
                             imageVector = Icons.Default.DeleteForever,
-                            contentDescription = "Reset Identity",
+                            contentDescription = strings.resetIdentity,
                             tint = LinkChatColors.DangerRed,
                         )
                     }
@@ -225,10 +258,10 @@ fun LinkChatApp(
                                     }
                                 }
                             ) {
-                                Icon(Icons.Default.Forum, contentDescription = "#public")
+                                Icon(Icons.Default.Forum, contentDescription = strings.tabPublic)
                             }
                         },
-                        label = { Text("#public") },
+                        label = { Text(strings.tabPublic) },
                     )
                     NavigationBarItem(
                         selected = state.activeTab == MainTab.PEERS,
@@ -245,16 +278,16 @@ fun LinkChatApp(
                                     }
                                 }
                             ) {
-                                Icon(Icons.Default.People, contentDescription = "Peers")
+                                Icon(Icons.Default.People, contentDescription = strings.tabPeers)
                             }
                         },
-                        label = { Text("Peers") },
+                        label = { Text(strings.tabPeers) },
                     )
                     NavigationBarItem(
                         selected = state.activeTab == MainTab.INSPECTOR,
                         onClick = { viewModel.selectTab(MainTab.INSPECTOR) },
-                        icon = { Icon(Icons.Default.BugReport, contentDescription = "Inspector") },
-                        label = { Text("Inspector") },
+                        icon = { Icon(Icons.Default.BugReport, contentDescription = strings.tabInspector) },
+                        label = { Text(strings.tabInspector) },
                     )
                 }
             }
@@ -280,14 +313,14 @@ fun LinkChatApp(
                         horizontalArrangement = Arrangement.SpaceBetween,
                     ) {
                         Text(
-                            text = "Bluetooth permissions are needed to discover & relay mesh peers.",
+                            text = strings.blePermissionsBanner,
                             style = MaterialTheme.typography.bodySmall,
                             color = LinkChatColors.TextPrimary,
                             modifier = Modifier.weight(1f),
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Button(onClick = onRequestPermissions) {
-                            Text("Grant")
+                            Text(strings.grant)
                         }
                     }
                 }
@@ -317,7 +350,7 @@ fun LinkChatApp(
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "Connecting to nearby peers...",
+                            text = strings.connectingPeers,
                             style = MaterialTheme.typography.labelMedium,
                             color = LinkChatColors.AccentCyan,
                         )
@@ -401,21 +434,27 @@ private fun ResetConfirmDialog(
     onDismiss: () -> Unit,
     onConfirm: () -> Unit,
 ) {
+    val strings = LocalStrings.current
+    val layoutDirection = LocalLayoutDirection.current
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = LinkChatColors.BgPanel,
         title = {
-            Text(
-                text = "Erase All Data & Reset Identity?",
-                color = LinkChatColors.DangerRed,
-                fontWeight = FontWeight.Bold,
-            )
+            CompositionLocalProvider(LocalLayoutDirection provides layoutDirection) {
+                Text(
+                    text = strings.resetDialogTitle,
+                    color = LinkChatColors.DangerRed,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
         },
         text = {
-            Text(
-                text = "This permanently wipes your cryptographic keys, nickname, peers, trust records, blocked tags, and all chat history. You will rejoin the mesh as a brand-new user.",
-                color = LinkChatColors.TextMuted,
-            )
+            CompositionLocalProvider(LocalLayoutDirection provides layoutDirection) {
+                Text(
+                    text = strings.resetDialogBody,
+                    color = LinkChatColors.TextMuted,
+                )
+            }
         },
         confirmButton = {
             Button(
@@ -425,12 +464,12 @@ private fun ResetConfirmDialog(
                     contentColor = LinkChatColors.TextPrimary,
                 ),
             ) {
-                Text("Wipe & Reset")
+                Text(strings.wipeAndReset)
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("Cancel")
+                Text(strings.cancel)
             }
         },
     )
@@ -442,30 +481,46 @@ private fun NicknameDialog(
     onDismiss: () -> Unit,
     onSave: (String) -> Unit,
 ) {
+    val strings = LocalStrings.current
+    val layoutDirection = LocalLayoutDirection.current
     var draft by remember(currentNickname) { mutableStateOf(currentNickname) }
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = LinkChatColors.BgPanel,
-        title = { Text("Change Display Nickname") },
+        title = {
+            CompositionLocalProvider(LocalLayoutDirection provides layoutDirection) {
+                Text(strings.changeNicknameTitle)
+            }
+        },
         text = {
-            OutlinedTextField(
-                value = draft,
-                onValueChange = { draft = it },
-                singleLine = true,
-                label = { Text("Nickname") },
-            )
+            CompositionLocalProvider(LocalLayoutDirection provides layoutDirection) {
+                OutlinedTextField(
+                    value = draft,
+                    onValueChange = { draft = it },
+                    singleLine = true,
+                    label = { Text(strings.nicknameLabel) },
+                    textStyle = MaterialTheme.typography.bodyLarge.copy(
+                        textDirection = TextDirection.Content,
+                        fontFamily = if (draft.any { isPersianChar(it) } || layoutDirection == LayoutDirection.Rtl) {
+                            VazirmatnFontFamily
+                        } else {
+                            null
+                        },
+                    ),
+                )
+            }
         },
         confirmButton = {
             Button(
                 onClick = { onSave(draft) },
                 enabled = draft.isNotBlank(),
             ) {
-                Text("Save")
+                Text(strings.save)
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("Cancel")
+                Text(strings.cancel)
             }
         },
     )

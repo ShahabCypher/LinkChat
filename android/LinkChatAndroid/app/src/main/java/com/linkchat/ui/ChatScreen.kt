@@ -34,6 +34,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -41,9 +42,12 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextDirection
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.linkchat.model.MessageModel
@@ -60,6 +64,8 @@ fun ChatScreen(
     onOpenVerify: (PeerModel) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val strings = LocalStrings.current
+    val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
     var draft by rememberSaveable(dmPeer?.nodeIdHex ?: "#public") { mutableStateOf("") }
     val listState = rememberLazyListState()
 
@@ -85,9 +91,9 @@ fun ChatScreen(
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(
                         text = if (dmPeer == null) {
-                            "No #public messages yet"
+                            strings.emptyPublicTitle
                         } else {
-                            "Encrypted chat with ${dmPeer.nickname}"
+                            strings.emptyDmTitle(dmPeer.nickname)
                         },
                         style = MaterialTheme.typography.titleMedium,
                         color = LinkChatColors.TextPrimary,
@@ -95,9 +101,9 @@ fun ChatScreen(
                     Spacer(modifier = Modifier.size(6.dp))
                     Text(
                         text = if (dmPeer == null) {
-                            "Broadcast messages relay across nearby Windows and Android BLE nodes."
+                            strings.emptyPublicDesc
                         } else {
-                            "Messages are end-to-end encrypted with X25519 + ChaCha20-Poly1305."
+                            strings.emptyDmDesc
                         },
                         style = MaterialTheme.typography.bodySmall,
                         color = LinkChatColors.TextMuted,
@@ -134,12 +140,20 @@ fun ChatScreen(
                     value = draft,
                     onValueChange = { draft = it },
                     modifier = Modifier.weight(1f),
+                    textStyle = MaterialTheme.typography.bodyLarge.copy(
+                        textDirection = TextDirection.Content,
+                        fontFamily = if (isRtl || draft.any { isPersianChar(it) }) {
+                            VazirmatnFontFamily
+                        } else {
+                            null
+                        },
+                    ),
                     placeholder = {
                         Text(
                             text = if (dmPeer == null) {
-                                "Message #public mesh..."
+                                strings.composerPublicPlaceholder
                             } else {
-                                "Encrypted DM to ${dmPeer.nickname}..."
+                                strings.composerDmPlaceholder(dmPeer.nickname)
                             },
                             color = LinkChatColors.TextMuted,
                         )
@@ -178,7 +192,7 @@ fun ChatScreen(
                         contentColor = LinkChatColors.BgRoot,
                     ),
                 ) {
-                    Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send")
+                    Icon(Icons.AutoMirrored.Filled.Send, contentDescription = strings.send)
                 }
             }
         }
@@ -190,6 +204,7 @@ private fun DmEncryptionBanner(
     peer: PeerModel,
     onOpenVerify: () -> Unit,
 ) {
+    val strings = LocalStrings.current
     val bgColor = if (peer.keyChanged) {
         LinkChatColors.DangerRed.copy(alpha = 0.16f)
     } else {
@@ -215,9 +230,9 @@ private fun DmEncryptionBanner(
         Spacer(modifier = Modifier.width(8.dp))
         Text(
             text = when {
-                peer.keyChanged -> "Key changed for ${peer.nickname}! Verify safety number."
-                peer.verified -> "E2EE Verified • ${peer.nickname} (LC-${peer.shortTag})"
-                else -> "E2EE Active • Tap Verify to compare safety emojis"
+                peer.keyChanged -> styledBidiText(strings.keyChangedBanner(peer.nickname))
+                peer.verified -> styledBidiText(strings.e2eeVerifiedBanner(peer.nickname, peer.shortTag))
+                else -> styledBidiText(strings.e2eeActiveBanner)
             },
             style = MaterialTheme.typography.labelMedium,
             color = LinkChatColors.TextPrimary,
@@ -230,7 +245,7 @@ private fun DmEncryptionBanner(
                 modifier = Modifier.size(15.dp),
             )
             Spacer(modifier = Modifier.width(4.dp))
-            Text(if (peer.verified) "Verified" else "Verify")
+            Text(if (peer.verified) strings.verified else strings.verify)
         }
     }
 }
@@ -240,16 +255,31 @@ private fun MessageBubble(
     msg: MessageModel,
     showSender: Boolean,
 ) {
-    val align = if (msg.isOutgoing) Alignment.End else Alignment.Start
+    val strings = LocalStrings.current
+    val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
+    // Keep outgoing bubbles on the right and incoming bubbles on the left even in RTL mode.
+    val align = if (isRtl) {
+        if (msg.isOutgoing) Alignment.Start else Alignment.End
+    } else {
+        if (msg.isOutgoing) Alignment.End else Alignment.Start
+    }
     val bubbleColor = if (msg.isOutgoing) {
         LinkChatColors.OutgoingBubble
     } else {
         LinkChatColors.IncomingBubble
     }
-    val shape = if (msg.isOutgoing) {
-        RoundedCornerShape(16.dp, 16.dp, 4.dp, 16.dp)
+    val shape = if (isRtl) {
+        if (msg.isOutgoing) {
+            RoundedCornerShape(16.dp, 16.dp, 16.dp, 4.dp)
+        } else {
+            RoundedCornerShape(16.dp, 16.dp, 4.dp, 16.dp)
+        }
     } else {
-        RoundedCornerShape(16.dp, 16.dp, 16.dp, 4.dp)
+        if (msg.isOutgoing) {
+            RoundedCornerShape(16.dp, 16.dp, 4.dp, 16.dp)
+        } else {
+            RoundedCornerShape(16.dp, 16.dp, 16.dp, 4.dp)
+        }
     }
 
     Column(
@@ -277,20 +307,22 @@ private fun MessageBubble(
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
                         Text(
-                            text = msg.senderNick.ifBlank { msg.originId.take(4) },
+                            text = styledBidiText(msg.senderNick.ifBlank { msg.originId.take(4) }),
                             style = MaterialTheme.typography.labelMedium.copy(lineHeight = 14.sp),
                             fontWeight = FontWeight.SemiBold,
                             color = LinkChatColors.AccentCyan,
                         )
-                        Text(
-                            text = "LC-${msg.originId.take(4)}",
-                            style = headerMetaStyle,
-                            fontFamily = FontFamily.Monospace,
-                            color = LinkChatColors.TextMuted,
-                        )
+                        CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                            Text(
+                                text = "LC-${msg.originId.take(4)}",
+                                style = headerMetaStyle,
+                                fontFamily = FontFamily.Monospace,
+                                color = LinkChatColors.TextMuted,
+                            )
+                        }
                         if (msg.hopCount > 0) {
                             Text(
-                                text = if (msg.hopCount == 1) "• direct" else "• ${msg.hopCount}h",
+                                text = if (msg.hopCount == 1) strings.msgDirectBadge else "• ${msg.hopCount}h",
                                 style = headerMetaStyle,
                                 color = LinkChatColors.TextMuted,
                             )
@@ -299,8 +331,11 @@ private fun MessageBubble(
                 }
 
                 Text(
-                    text = msg.text,
-                    style = MaterialTheme.typography.bodyMedium.copy(lineHeight = 18.sp),
+                    text = styledBidiText(msg.text),
+                    style = MaterialTheme.typography.bodyMedium.copy(
+                        lineHeight = 20.sp,
+                        textDirection = TextDirection.Content,
+                    ),
                     color = LinkChatColors.TextPrimary,
                 )
 
@@ -316,9 +351,9 @@ private fun MessageBubble(
                     )
                     if (msg.isOutgoing && msg.channel != "#public") {
                         val (label, color) = when (msg.status) {
-                            "delivered" -> "Delivered ✓✓" to LinkChatColors.VerifiedGreen
-                            "relayed" -> "Relayed ✓" to LinkChatColors.WarningAmber
-                            else -> "Sending..." to LinkChatColors.TextMuted
+                            "delivered" -> strings.dmDelivered to LinkChatColors.VerifiedGreen
+                            "relayed" -> strings.dmRelayed to LinkChatColors.WarningAmber
+                            else -> strings.dmSending to LinkChatColors.TextMuted
                         }
                         Text(
                             text = label,
@@ -334,6 +369,6 @@ private fun MessageBubble(
 }
 
 private fun formatTime(timestampMs: Long): String {
-    val fmt = SimpleDateFormat("HH:mm", Locale.getDefault())
+    val fmt = SimpleDateFormat("HH:mm", Locale.US)
     return fmt.format(Date(timestampMs))
 }

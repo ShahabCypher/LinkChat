@@ -27,14 +27,17 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.linkchat.model.LogEntryModel
@@ -50,6 +53,7 @@ fun InspectorScreen(
     onClearLogs: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val strings = LocalStrings.current
     var selectedFilter by rememberSaveable { mutableStateOf("ALL") }
     var tagInput by rememberSaveable { mutableStateOf("") }
 
@@ -71,7 +75,7 @@ fun InspectorScreen(
                     OutlinedTextField(
                         value = tagInput,
                         onValueChange = { if (it.length <= 4) tagInput = it },
-                        label = { Text("Block LC tag (4-hex demo filter)") },
+                        label = { Text(strings.blockTagLabel) },
                         singleLine = true,
                         modifier = Modifier.weight(1f),
                     )
@@ -83,12 +87,12 @@ fun InspectorScreen(
                         },
                         enabled = tagInput.trim().length == 4,
                     ) {
-                        Text("Toggle")
+                        Text(strings.toggle)
                     }
                     IconButton(onClick = onClearLogs) {
                         Icon(
                             Icons.Default.DeleteOutline,
-                            contentDescription = "Clear Logs",
+                            contentDescription = strings.clearLogs,
                             tint = LinkChatColors.TextMuted,
                         )
                     }
@@ -96,7 +100,7 @@ fun InspectorScreen(
                 if (blockedTags.isNotEmpty()) {
                     Spacer(modifier = Modifier.size(6.dp))
                     Text(
-                        text = "Blocked tags: ${blockedTags.joinToString { "LC-$it" }}",
+                        text = strings.blockedTagsPrefix(blockedTags.joinToString { "LC-$it" }),
                         style = MaterialTheme.typography.labelSmall,
                         color = LinkChatColors.WarningAmber,
                     )
@@ -104,19 +108,21 @@ fun InspectorScreen(
             }
         }
 
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState())
-                .padding(horizontal = 12.dp, vertical = 6.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            filters.forEach { f ->
-                FilterChip(
-                    selected = selectedFilter == f,
-                    onClick = { selectedFilter = f },
-                    label = { Text(f) },
-                )
+        CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                filters.forEach { f ->
+                    FilterChip(
+                        selected = selectedFilter == f,
+                        onClick = { selectedFilter = f },
+                        label = { Text(f) },
+                    )
+                }
             }
         }
 
@@ -128,18 +134,20 @@ fun InspectorScreen(
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
-                    text = "No mesh events recorded yet.",
+                    text = strings.noMeshEvents,
                     color = LinkChatColors.TextMuted,
                 )
             }
         } else {
-            LazyColumn(
-                modifier = Modifier.weight(1f),
-                contentPadding = PaddingValues(12.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                items(filtered) { entry ->
-                    LogRow(entry)
+            CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                LazyColumn(
+                    modifier = Modifier.weight(1f),
+                    contentPadding = PaddingValues(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    items(filtered) { entry ->
+                        LogRow(entry)
+                    }
                 }
             }
         }
@@ -212,5 +220,5 @@ private fun LogRow(entry: LogEntryModel) {
 }
 
 private fun formatLogTime(ts: Long): String {
-    return SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(ts))
+    return SimpleDateFormat("HH:mm:ss", Locale.US).format(Date(ts))
 }

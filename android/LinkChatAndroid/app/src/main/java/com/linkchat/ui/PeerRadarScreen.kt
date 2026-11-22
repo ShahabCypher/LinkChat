@@ -32,12 +32,15 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import com.linkchat.model.PeerModel
 
@@ -51,6 +54,8 @@ fun PeerRadarScreen(
     onToggleBlockTag: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val strings = LocalStrings.current
+
     if (peers.isEmpty()) {
         Box(
             modifier = modifier
@@ -60,13 +65,13 @@ fun PeerRadarScreen(
         ) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(
-                    text = "Scanning BLE Mesh...",
+                    text = strings.scanningBleMesh,
                     style = MaterialTheme.typography.titleMedium,
                     color = LinkChatColors.TextPrimary,
                 )
                 Spacer(modifier = Modifier.size(6.dp))
                 Text(
-                    text = "Nearby Android and Windows LinkChat nodes will appear here automatically.",
+                    text = strings.scanningBleDesc,
                     style = MaterialTheme.typography.bodySmall,
                     color = LinkChatColors.TextMuted,
                 )
@@ -104,6 +109,8 @@ private fun PeerCard(
     onOpenVerify: () -> Unit,
     onToggleBlock: () -> Unit,
 ) {
+    val strings = LocalStrings.current
+
     Card(
         colors = CardDefaults.cardColors(containerColor = LinkChatColors.BgCard),
         shape = RoundedCornerShape(14.dp),
@@ -126,7 +133,7 @@ private fun PeerCard(
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(
-                        text = peer.nickname.take(2).uppercase().ifBlank { "LC" },
+                        text = styledBidiText(peer.nickname.take(2).uppercase().ifBlank { "LC" }),
                         fontWeight = FontWeight.Bold,
                         color = LinkChatColors.AccentCyan,
                     )
@@ -150,17 +157,19 @@ private fun PeerCard(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     Text(
-                        text = peer.nickname.ifBlank { "LC-${peer.shortTag}" },
+                        text = styledBidiText(peer.nickname.ifBlank { "LC-${peer.shortTag}" }),
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.SemiBold,
                         color = LinkChatColors.TextPrimary,
                     )
-                    Text(
-                        text = "LC-${peer.shortTag}",
-                        style = MaterialTheme.typography.labelSmall,
-                        fontFamily = FontFamily.Monospace,
-                        color = LinkChatColors.TextMuted,
-                    )
+                    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                        Text(
+                            text = "LC-${peer.shortTag}",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontFamily = FontFamily.Monospace,
+                            color = LinkChatColors.TextMuted,
+                        )
+                    }
                     if (unreadCount > 0) {
                         Badge(containerColor = LinkChatColors.AccentCyan) {
                             Text("$unreadCount", color = LinkChatColors.BgRoot)
@@ -175,9 +184,9 @@ private fun PeerCard(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     val hopLabel = when {
-                        !peer.connected -> "Offline"
-                        peer.direct -> "Direct"
-                        else -> "${peer.hopCount} hops"
+                        !peer.connected -> strings.offlineLabel
+                        peer.direct -> strings.directLabel
+                        else -> strings.hopsLabel(peer.hopCount)
                     }
                     val hopColor = when {
                         !peer.connected -> LinkChatColors.TextMuted
@@ -187,27 +196,29 @@ private fun PeerCard(
                     Pill(text = hopLabel, color = hopColor)
 
                     if (peer.connected && peer.direct) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                imageVector = Icons.Default.SignalCellularAlt,
-                                contentDescription = null,
-                                tint = LinkChatColors.TextMuted,
-                                modifier = Modifier.size(13.dp),
-                            )
-                            Text(
-                                text = " ${peer.rssi} dBm",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = LinkChatColors.TextMuted,
-                            )
+                        CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = Icons.Default.SignalCellularAlt,
+                                    contentDescription = null,
+                                    tint = LinkChatColors.TextMuted,
+                                    modifier = Modifier.size(13.dp),
+                                )
+                                Text(
+                                    text = " ${peer.rssi} dBm",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = LinkChatColors.TextMuted,
+                                )
+                            }
                         }
                     }
 
                     if (peer.keyChanged) {
-                        Pill(text = "Key Changed!", color = LinkChatColors.DangerRed)
+                        Pill(text = strings.keyChangedPill, color = LinkChatColors.DangerRed)
                     }
 
                     if (isBlocked) {
-                        Pill(text = "Blocked", color = LinkChatColors.WarningAmber)
+                        Pill(text = strings.blockedPill, color = LinkChatColors.WarningAmber)
                     }
                 }
             }
@@ -215,7 +226,7 @@ private fun PeerCard(
             IconButton(onClick = onOpenVerify) {
                 Icon(
                     imageVector = if (peer.keyChanged) Icons.Default.Warning else Icons.Default.VerifiedUser,
-                    contentDescription = "Verify Safety Number",
+                    contentDescription = strings.verifySafetyNumber,
                     tint = when {
                         peer.keyChanged -> LinkChatColors.DangerRed
                         peer.verified -> LinkChatColors.VerifiedGreen
@@ -226,14 +237,14 @@ private fun PeerCard(
             IconButton(onClick = onToggleBlock) {
                 Icon(
                     imageVector = Icons.Default.Block,
-                    contentDescription = "Toggle Debug Tag Block",
+                    contentDescription = strings.toggleBlockTag,
                     tint = if (isBlocked) LinkChatColors.WarningAmber else LinkChatColors.TextMuted.copy(alpha = 0.6f),
                 )
             }
             IconButton(onClick = onOpenDm) {
                 Icon(
                     imageVector = Icons.AutoMirrored.Filled.Chat,
-                    contentDescription = "Open Encrypted DM",
+                    contentDescription = strings.openEncryptedDm,
                     tint = LinkChatColors.AccentCyan,
                 )
             }

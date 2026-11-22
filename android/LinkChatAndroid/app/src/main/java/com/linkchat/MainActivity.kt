@@ -6,14 +6,21 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.unit.LayoutDirection
 import com.linkchat.ble.LinkChatService
 import com.linkchat.model.PermissionHelper
+import com.linkchat.ui.AppLanguage
 import com.linkchat.ui.LinkChatApp
 import com.linkchat.ui.LinkChatTheme
 import com.linkchat.ui.LinkChatViewModel
+import com.linkchat.ui.LocalStrings
+import com.linkchat.ui.stringsFor
 
 class MainActivity : ComponentActivity() {
 
@@ -30,8 +37,9 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
+        val app = application as LinkChatApplication
         // Start core node immediately so local identity & history load regardless of BLE state.
-        (application as LinkChatApplication).pythonBridge.start()
+        app.pythonBridge.start()
         refreshPermissionsAndStartMesh()
 
         val missing = PermissionHelper.missingStartupPermissions(this)
@@ -40,24 +48,31 @@ class MainActivity : ComponentActivity() {
         }
 
         setContent {
-            LinkChatTheme {
-                LinkChatApp(
-                    viewModel = viewModel,
-                    hasBlePermissions = hasBlePermissions,
-                    onRequestPermissions = {
-                        val req = PermissionHelper.missingStartupPermissions(this)
-                        if (req.isNotEmpty()) {
-                            permissionLauncher.launch(req.toTypedArray())
-                        } else {
-                            refreshPermissionsAndStartMesh()
-                        }
-                    },
-                    onStartMeshService = {
-                        if (PermissionHelper.hasBlePermissions(this)) {
-                            LinkChatService.start(this)
-                        }
-                    },
-                )
+            val language by app.language.collectAsState()
+            val layoutDirection = if (language.isRtl) LayoutDirection.Rtl else LayoutDirection.Ltr
+            LinkChatTheme(isPersian = language == AppLanguage.FA) {
+                CompositionLocalProvider(
+                    LocalLayoutDirection provides layoutDirection,
+                    LocalStrings provides stringsFor(language),
+                ) {
+                    LinkChatApp(
+                        viewModel = viewModel,
+                        hasBlePermissions = hasBlePermissions,
+                        onRequestPermissions = {
+                            val req = PermissionHelper.missingStartupPermissions(this)
+                            if (req.isNotEmpty()) {
+                                permissionLauncher.launch(req.toTypedArray())
+                            } else {
+                                refreshPermissionsAndStartMesh()
+                            }
+                        },
+                        onStartMeshService = {
+                            if (PermissionHelper.hasBlePermissions(this)) {
+                                LinkChatService.start(this)
+                            }
+                        },
+                    )
+                }
             }
         }
     }
