@@ -354,3 +354,59 @@ def test_android_bridge_reset_all_rotates_identity_and_clears_history(
         assert json.loads(bridge_inst.get_history("#public")) == []
     finally:
         bridge_inst.stop()
+
+
+def test_android_bridge_stale_peer_disconnects_link_and_marks_offline(
+    tmp_path: Path,
+) -> None:
+    bridge_inst = android_bridge.AndroidBridge()
+    collector = _EventCollector()
+
+    class _DisconnectingPipe(_PipeTransport):
+        def __init__(self, b: android_bridge.AndroidBridge, h: str) -> None:
+            super().__init__(b, h)
+            self.disconnected_handles: list[str] = []
+
+        def disconnectLink(self, peer_handle: str) -> None:
+            self.disconnected_handles.append(peer_handle)
+
+    pipe = _DisconnectingPipe(bridge_inst, "ble-c:AA:BB:CC:DD:EE:01")
+    bridge_inst.start(
+        data_dir=str(tmp_path / "android"),
+        transport_sink=pipe,
+        event_listener=collector,
+        nickname="PixelPhone",
+        stale_timeout_sec=0.35,
+    )
+
+    async def _run() -> None:
+        peer_node = LinkChatNode(tmp_path / "peer", pipe, nickname="WinPeer")
+        await peer_node.start()
+        try:
+            await pipe.bring_up(mtu=247, rssi=-52)
+            up_ev = await _wait_event(
+                collector,
+                lambda e: e.get("type") == "peer_updated"
+                and e["peer"]["nickname"] == "WinPeer"
+                and e["peer"]["connected"] is True,
+            )
+            win_id = up_ev["peer"]["node_id_hex"]
+
+            # Stop peer silently without calling bridge_inst.on_link_down
+            await peer_node.stop()
+
+            down_ev = await _wait_event(
+                collector,
+                lambda e: e.get("type") == "peer_updated"
+                and e["peer"]["node_id_hex"] == win_id
+                and e["peer"]["connected"] is False,
+            )
+            assert down_ev["peer"]["direct"] is False
+            assert pipe.disconnected_handles == ["ble-c:AA:BB:CC:DD:EE:01"]
+        finally:
+            await peer_node.stop()
+
+    try:
+        asyncio.run(_run())
+    finally:
+        bridge_inst.stop()

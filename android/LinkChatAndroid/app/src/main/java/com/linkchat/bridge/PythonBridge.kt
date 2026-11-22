@@ -29,12 +29,18 @@ class PythonBridge(private val context: Context) {
 
     interface ChunkSender {
         fun sendChunk(peerHandle: String, chunk: ByteArray)
+        fun disconnectLink(peerHandle: String) {}
     }
 
     private inner class TransportSink {
         @Suppress("unused") // Called from bridge.py via Chaquopy
         fun sendChunk(peerHandle: String, chunk: ByteArray) {
             chunkSender?.sendChunk(peerHandle, chunk)
+        }
+
+        @Suppress("unused") // Called from bridge.py via Chaquopy
+        fun disconnectLink(peerHandle: String) {
+            chunkSender?.disconnectLink(peerHandle)
         }
     }
 

@@ -90,7 +90,9 @@ class AndroidBleTransport(
         var linkUpNotified: Boolean = false,
         val sendQueue: ArrayDeque<ByteArray> = ArrayDeque(),
         var writeInFlight: Boolean = false,
+        var failedWrites: Int = 0,
         var watchdogRunnable: Runnable? = null,
+        var connectTimeoutRunnable: Runnable? = null,
     )
 
     private data class PeripheralLink(
@@ -100,6 +102,7 @@ class AndroidBleTransport(
         var linkUpNotified: Boolean = false,
         val notifyQueue: ArrayDeque<ByteArray> = ArrayDeque(),
         var notifyInFlight: Boolean = false,
+        var failedNotifies: Int = 0,
         var watchdogRunnable: Runnable? = null,
     )
 
@@ -174,12 +177,15 @@ class AndroidBleTransport(
         }
     }
 
-    private fun teardownPeripheralLink(pLink: PeripheralLink) {
+    private fun teardownPeripheralLink(pLink: PeripheralLink, notifyBridge: Boolean = true) {
         pLink.watchdogRunnable?.let { opsHandler.removeCallbacks(it) }
+        pLink.watchdogRunnable = null
+        pLink.notifyInFlight = false
+        pLink.notifyQueue.clear()
         peripheralLinks.remove(pLink.handle)
         knownMtuByAddress.remove(pLink.device.address)
         runCatching { gattServer?.cancelConnection(pLink.device) }
-        if (pLink.linkUpNotified) {
+        if (notifyBridge && pLink.linkUpNotified) {
             pythonBridge.onLinkDown(pLink.handle)
         }
         emitStatus()
@@ -309,6 +315,13 @@ class AndroidBleTransport(
         }
     }
 
+    override fun disconnectLink(peerHandle: String) {
+        opsHandler.post {
+            centralLinks[peerHandle]?.let { teardownCentralLink(it, notifyBridge = false) }
+            peripheralLinks[peerHandle]?.let { teardownPeripheralLink(it, notifyBridge = false) }
+        }
+    }
+
     private fun stopRadioOnly() {
         scanRetryRunnable?.let { opsHandler.removeCallbacks(it) }
         scanRetryRunnable = null
@@ -331,6 +344,7 @@ class AndroidBleTransport(
         advertiser = null
 
         for (cLink in centralLinks.values.toList()) {
+            cLink.connectTimeoutRunnable?.let { opsHandler.removeCallbacks(it) }
             cLink.watchdogRunnable?.let { opsHandler.removeCallbacks(it) }
             runCatching { cLink.gatt.disconnect() }
             runCatching { cLink.gatt.close() }
@@ -544,11 +558,7 @@ class AndroidBleTransport(
                     if (enabled) {
                         ensurePeripheralLinkUp(device)
                     } else {
-                        val pLink = peripheralLinks.remove(handle)
-                        if (pLink != null && pLink.linkUpNotified) {
-                            pythonBridge.onLinkDown(handle)
-                        }
-                        emitStatus()
+                        peripheralLinks[handle]?.let { teardownPeripheralLink(it) }
                     }
                 }
             }
@@ -585,7 +595,12 @@ class AndroidBleTransport(
                 pLink.watchdogRunnable?.let { opsHandler.removeCallbacks(it) }
                 pLink.watchdogRunnable = null
                 pLink.notifyInFlight = false
-                pumpPeripheralNotify(pLink)
+                if (status == BluetoothGatt.GATT_SUCCESS) {
+                    pLink.failedNotifies = 0
+                    pumpPeripheralNotify(pLink)
+                } else {
+                    handlePeripheralFailure(pLink)
+                }
             }
         }
     }
@@ -614,9 +629,26 @@ class AndroidBleTransport(
         return created
     }
 
+    private fun isPeripheralConnected(pLink: PeripheralLink): Boolean {
+        val state = runCatching {
+            bluetoothManager?.getConnectionState(pLink.device, BluetoothProfile.GATT_SERVER)
+        }.getOrNull()
+        return state == BluetoothProfile.STATE_CONNECTED
+    }
+
+    private fun handlePeripheralFailure(pLink: PeripheralLink) {
+        pLink.failedNotifies += 1
+        if (!isPeripheralConnected(pLink) || pLink.failedNotifies >= MAX_CONSECUTIVE_GATT_FAILURES) {
+            teardownPeripheralLink(pLink)
+        } else {
+            pumpPeripheralNotify(pLink)
+        }
+    }
+
     @Suppress("DEPRECATION")
     private fun pumpPeripheralNotify(pLink: PeripheralLink) {
         if (!started || pLink.notifyInFlight) return
+        if (!peripheralLinks.containsKey(pLink.handle)) return
         val server = gattServer ?: return
         val txChar = txCharacteristic ?: return
         val next = pLink.notifyQueue.pollFirst() ?: return
@@ -637,13 +669,14 @@ class AndroidBleTransport(
 
         if (!ok) {
             pLink.notifyInFlight = false
+            handlePeripheralFailure(pLink)
             return
         }
 
         val watchdog = Runnable {
             if (pLink.notifyInFlight) {
                 pLink.notifyInFlight = false
-                pumpPeripheralNotify(pLink)
+                handlePeripheralFailure(pLink)
             }
         }
         pLink.watchdogRunnable = watchdog
@@ -761,8 +794,15 @@ class AndroidBleTransport(
             gatt = gatt,
             rssi = rssi,
         )
+        val connectTimeout = Runnable {
+            if (!link.linkUpNotified && centralLinks[handle] === link) {
+                teardownCentralLink(link)
+            }
+        }
+        link.connectTimeoutRunnable = connectTimeout
         centralLinks[handle] = link
         centralByAddress[address] = link
+        opsHandler.postDelayed(connectTimeout, CONNECT_TIMEOUT_MS)
     }
 
     private val centralGattCallback = object : BluetoothGattCallback() {
@@ -864,7 +904,12 @@ class AndroidBleTransport(
                 cLink.watchdogRunnable?.let { opsHandler.removeCallbacks(it) }
                 cLink.watchdogRunnable = null
                 cLink.writeInFlight = false
-                pumpCentralWrite(cLink)
+                if (status == BluetoothGatt.GATT_SUCCESS) {
+                    cLink.failedWrites = 0
+                    pumpCentralWrite(cLink)
+                } else {
+                    handleCentralFailure(cLink)
+                }
             }
         }
 
@@ -900,27 +945,51 @@ class AndroidBleTransport(
     }
 
     private fun markCentralLinkUp(cLink: CentralLink) {
+        cLink.connectTimeoutRunnable?.let { opsHandler.removeCallbacks(it) }
+        cLink.connectTimeoutRunnable = null
         if (cLink.linkUpNotified) return
         cLink.linkUpNotified = true
         pythonBridge.onLinkUp(cLink.handle, cLink.mtu, cLink.rssi)
         emitStatus()
     }
 
-    private fun teardownCentralLink(cLink: CentralLink) {
+    private fun teardownCentralLink(cLink: CentralLink, notifyBridge: Boolean = true) {
+        cLink.connectTimeoutRunnable?.let { opsHandler.removeCallbacks(it) }
+        cLink.connectTimeoutRunnable = null
         cLink.watchdogRunnable?.let { opsHandler.removeCallbacks(it) }
+        cLink.watchdogRunnable = null
+        cLink.writeInFlight = false
+        cLink.sendQueue.clear()
         centralLinks.remove(cLink.handle)
         centralByAddress.remove(cLink.address)
         runCatching { cLink.gatt.disconnect() }
         runCatching { cLink.gatt.close() }
-        if (cLink.linkUpNotified) {
+        if (notifyBridge && cLink.linkUpNotified) {
             pythonBridge.onLinkDown(cLink.handle)
         }
         emitStatus()
     }
 
+    private fun isCentralConnected(cLink: CentralLink): Boolean {
+        val state = runCatching {
+            bluetoothManager?.getConnectionState(cLink.gatt.device, BluetoothProfile.GATT)
+        }.getOrNull()
+        return state == BluetoothProfile.STATE_CONNECTED
+    }
+
+    private fun handleCentralFailure(cLink: CentralLink) {
+        cLink.failedWrites += 1
+        if (!isCentralConnected(cLink) || cLink.failedWrites >= MAX_CONSECUTIVE_GATT_FAILURES) {
+            teardownCentralLink(cLink)
+        } else {
+            pumpCentralWrite(cLink)
+        }
+    }
+
     @Suppress("DEPRECATION")
     private fun pumpCentralWrite(cLink: CentralLink) {
         if (!started || cLink.writeInFlight) return
+        if (!centralLinks.containsKey(cLink.handle)) return
         val rxChar = cLink.rxChar ?: return
         val next = cLink.sendQueue.pollFirst() ?: return
 
@@ -949,13 +1018,14 @@ class AndroidBleTransport(
 
         if (!ok) {
             cLink.writeInFlight = false
+            handleCentralFailure(cLink)
             return
         }
 
         val watchdog = Runnable {
             if (cLink.writeInFlight) {
                 cLink.writeInFlight = false
-                pumpCentralWrite(cLink)
+                handleCentralFailure(cLink)
             }
         }
         cLink.watchdogRunnable = watchdog
@@ -988,7 +1058,9 @@ class AndroidBleTransport(
         private const val MAX_ATT_MTU = 512
         private const val DEFAULT_RSSI = -70
         private const val CONNECT_COOLDOWN_MS = 5_000L
+        private const val CONNECT_TIMEOUT_MS = 10_000L
         private const val SCAN_RETRY_MS = 5_000L
         private const val GATT_OP_TIMEOUT_MS = 1_500L
+        private const val MAX_CONSECUTIVE_GATT_FAILURES = 2
     }
 }

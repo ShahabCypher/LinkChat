@@ -111,6 +111,10 @@ class _BridgeTransport:
     async def send_chunk(self, peer_handle: str, chunk: bytes) -> None:
         _invoke_sink(self._sink, "sendChunk", "send_chunk", peer_handle, bytes(chunk))
 
+    async def disconnect_link(self, peer_handle: str) -> None:
+        if hasattr(self._sink, "disconnectLink") or hasattr(self._sink, "disconnect_link"):
+            _invoke_sink(self._sink, "disconnectLink", "disconnect_link", peer_handle)
+
     async def dispatch_link_up(self, handle: str, mtu: int, rssi: int) -> None:
         if self._on_link_up is not None:
             await self._on_link_up(handle, mtu, rssi)
@@ -146,7 +150,7 @@ class AndroidBridge:
         event_listener: Any,
         nickname: str | None = None,
         *,
-        stale_timeout_sec: float = 90.0,
+        stale_timeout_sec: float = 16.0,
         jitter_range: tuple[float, float] = (0.015, 0.060),
     ) -> str:
         with self._lock:
