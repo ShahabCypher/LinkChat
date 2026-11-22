@@ -410,3 +410,90 @@ def test_android_bridge_stale_peer_disconnects_link_and_marks_offline(
         asyncio.run(_run())
     finally:
         bridge_inst.stop()
+
+
+def test_android_bridge_dm_block_keeps_link_and_public_but_drops_dms(
+    tmp_path: Path,
+) -> None:
+    bridge_inst = android_bridge.AndroidBridge()
+    collector = _EventCollector()
+    pipe = _PipeTransport(bridge_inst, "ble-c:AA:BB:CC:DD:EE:02")
+
+    ready = json.loads(
+        bridge_inst.start(
+            data_dir=str(tmp_path / "android"),
+            transport_sink=pipe,
+            event_listener=collector,
+            nickname="PixelPhone",
+        )
+    )
+
+    async def _run() -> None:
+        peer_node = LinkChatNode(tmp_path / "peer", pipe, nickname="WinPeer")
+        await peer_node.start()
+        try:
+            await pipe.bring_up(mtu=247, rssi=-52)
+            up_ev = await _wait_event(
+                collector,
+                lambda e: e.get("type") == "peer_updated"
+                and e["peer"]["nickname"] == "WinPeer",
+            )
+            win_id = up_ev["peer"]["node_id_hex"]
+            assert up_ev["peer"]["blocked"] is False
+
+            # Block peer via AndroidBridge
+            bridge_inst.set_peer_blocked(win_id, True)
+            blk_ev = await _wait_event(
+                collector,
+                lambda e: e.get("type") == "peer_updated"
+                and e["peer"]["node_id_hex"] == win_id
+                and e["peer"]["blocked"] is True,
+            )
+            assert blk_ev["peer"]["connected"] is True
+            peers = json.loads(bridge_inst.get_peers())
+            assert peers[0]["blocked"] is True
+
+            # Outbound DM from AndroidBridge fails while blocked
+            bridge_inst.send_dm(win_id, "blocked outbound")
+            err_ev = await _wait_event(collector, lambda e: e.get("type") == "error")
+            assert "blocked" in err_ev["message"]
+
+            # Public message from blocked peer still arrives
+            await peer_node.send_public("public while blocked")
+            pub_ev = await _wait_event(
+                collector,
+                lambda e: e.get("type") == "public_message"
+                and e["record"]["text"] == "public while blocked",
+            )
+            assert pub_ev["record"]["sender_nick"] == "WinPeer"
+
+            # DM from blocked peer is dropped and still absent after unblocking
+            await peer_node.send_dm(ready["node_id_hex"], "dm while blocked")
+            await asyncio.sleep(0.15)
+            assert json.loads(bridge_inst.get_history(win_id)) == []
+
+            bridge_inst.set_peer_blocked(win_id, False)
+            await _wait_event(
+                collector,
+                lambda e: e.get("type") == "peer_updated"
+                and e["peer"]["node_id_hex"] == win_id
+                and e["peer"]["blocked"] is False,
+            )
+            await asyncio.sleep(0.15)
+            assert json.loads(bridge_inst.get_history(win_id)) == []
+
+            # New DM after unblock arrives normally
+            await peer_node.send_dm(ready["node_id_hex"], "dm after unblock")
+            dm_ev = await _wait_event(
+                collector,
+                lambda e: e.get("type") == "dm_received"
+                and e["record"]["text"] == "dm after unblock",
+            )
+            assert dm_ev["record"]["text"] == "dm after unblock"
+        finally:
+            await peer_node.stop()
+
+    try:
+        asyncio.run(_run())
+    finally:
+        bridge_inst.stop()

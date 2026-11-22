@@ -21,6 +21,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.Block
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.VerifiedUser
 import androidx.compose.material.icons.filled.Warning
@@ -63,10 +64,12 @@ fun ChatScreen(
     dmPeer: PeerModel?,
     onSendMessage: (String) -> Unit,
     onOpenVerify: (PeerModel) -> Unit,
+    onUnblockPeer: (PeerModel) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val strings = LocalStrings.current
     val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
+    val isDmBlocked = dmPeer?.blocked == true
     var draft by rememberSaveable(dmPeer?.nodeIdHex ?: "#public") { mutableStateOf("") }
     val listState = rememberLazyListState()
 
@@ -79,6 +82,9 @@ fun ChatScreen(
     Column(modifier = modifier.fillMaxSize()) {
         if (dmPeer != null) {
             DmEncryptionBanner(peer = dmPeer, onOpenVerify = { onOpenVerify(dmPeer) })
+            if (isDmBlocked) {
+                DmBlockedBanner(onUnblock = { onUnblockPeer(dmPeer) })
+            }
         }
 
         if (messages.isEmpty()) {
@@ -144,6 +150,7 @@ fun ChatScreen(
                 OutlinedTextField(
                     value = draft,
                     onValueChange = { draft = it },
+                    enabled = !isDmBlocked,
                     modifier = Modifier.weight(1f),
                     textStyle = MaterialTheme.typography.bodyLarge.copy(
                         textDirection = draftDir,
@@ -155,10 +162,10 @@ fun ChatScreen(
                         },
                     ),
                     placeholder = {
-                        val placeholderText = if (dmPeer == null) {
-                            strings.composerPublicPlaceholder
-                        } else {
-                            strings.composerDmPlaceholder(dmPeer.nickname)
+                        val placeholderText = when {
+                            dmPeer == null -> strings.composerPublicPlaceholder
+                            isDmBlocked -> strings.composerDmBlockedPlaceholder
+                            else -> strings.composerDmPlaceholder(dmPeer.nickname)
                         }
                         Text(
                             text = styledBidiText(placeholderText),
@@ -172,7 +179,7 @@ fun ChatScreen(
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                     keyboardActions = KeyboardActions(
                         onSend = {
-                            if (draft.isNotBlank()) {
+                            if (!isDmBlocked && draft.isNotBlank()) {
                                 onSendMessage(draft)
                                 draft = ""
                             }
@@ -182,8 +189,10 @@ fun ChatScreen(
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedContainerColor = LinkChatColors.BgInput,
                         unfocusedContainerColor = LinkChatColors.BgInput,
+                        disabledContainerColor = LinkChatColors.BgInput.copy(alpha = 0.5f),
                         focusedBorderColor = LinkChatColors.AccentCyan,
                         unfocusedBorderColor = LinkChatColors.BorderSubtle,
+                        disabledBorderColor = LinkChatColors.BorderSubtle.copy(alpha = 0.5f),
                         focusedTextColor = LinkChatColors.TextPrimary,
                         unfocusedTextColor = LinkChatColors.TextPrimary,
                     ),
@@ -191,12 +200,12 @@ fun ChatScreen(
                 Spacer(modifier = Modifier.width(8.dp))
                 FilledIconButton(
                     onClick = {
-                        if (draft.isNotBlank()) {
+                        if (!isDmBlocked && draft.isNotBlank()) {
                             onSendMessage(draft)
                             draft = ""
                         }
                     },
-                    enabled = draft.isNotBlank(),
+                    enabled = !isDmBlocked && draft.isNotBlank(),
                     colors = IconButtonDefaults.filledIconButtonColors(
                         containerColor = LinkChatColors.AccentCyan,
                         contentColor = LinkChatColors.BgRoot,
@@ -260,6 +269,40 @@ private fun DmEncryptionBanner(
             )
             Spacer(modifier = Modifier.width(4.dp))
             Text(if (peer.verified) strings.verified else strings.verify)
+        }
+    }
+}
+
+@Composable
+private fun DmBlockedBanner(
+    onUnblock: () -> Unit,
+) {
+    val strings = LocalStrings.current
+    val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(LinkChatColors.WarningAmber.copy(alpha = 0.16f))
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            imageVector = Icons.Default.Block,
+            contentDescription = null,
+            tint = LinkChatColors.WarningAmber,
+            modifier = Modifier.size(16.dp),
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        Text(
+            text = styledBidiText(strings.dmBlockedBanner),
+            style = MaterialTheme.typography.labelMedium.copy(
+                textDirection = textDirectionFor(strings.dmBlockedBanner, defaultRtl = isRtl),
+            ),
+            color = LinkChatColors.TextPrimary,
+            modifier = Modifier.weight(1f),
+        )
+        TextButton(onClick = onUnblock) {
+            Text(strings.unblock, color = LinkChatColors.WarningAmber, fontWeight = FontWeight.Bold)
         }
     }
 }

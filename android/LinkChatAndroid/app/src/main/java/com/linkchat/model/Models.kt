@@ -12,6 +12,7 @@ data class PeerModel(
     val keyChanged: Boolean,
     val lastSeen: Double,
     val linkHandle: String? = null,
+    val blocked: Boolean = false,
 )
 
 data class MessageModel(

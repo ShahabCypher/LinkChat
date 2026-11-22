@@ -371,6 +371,7 @@ fun LinkChatApp(
                     dmPeer = state.activeDmPeer,
                     onSendMessage = viewModel::sendMessage,
                     onOpenVerify = viewModel::openVerifySheet,
+                    onUnblockPeer = { peer -> viewModel.setPeerBlocked(peer.nodeIdHex, false) },
                     modifier = Modifier.weight(1f),
                 )
             } else {
@@ -386,10 +387,9 @@ fun LinkChatApp(
                     MainTab.PEERS -> PeerRadarScreen(
                         peers = state.peers,
                         unreadCounts = state.unreadCounts,
-                        blockedTags = state.blockedTags,
                         onOpenDm = { peer -> viewModel.openDm(peer.nodeIdHex) },
                         onOpenVerify = viewModel::openVerifySheet,
-                        onToggleBlockTag = viewModel::toggleBlockedTag,
+                        onToggleBlockPeer = { peer -> viewModel.setPeerBlocked(peer.nodeIdHex, !peer.blocked) },
                         modifier = Modifier.weight(1f),
                     )
 

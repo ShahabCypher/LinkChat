@@ -48,10 +48,9 @@ import com.linkchat.model.PeerModel
 fun PeerRadarScreen(
     peers: List<PeerModel>,
     unreadCounts: Map<String, Int>,
-    blockedTags: Set<String>,
     onOpenDm: (PeerModel) -> Unit,
     onOpenVerify: (PeerModel) -> Unit,
-    onToggleBlockTag: (String) -> Unit,
+    onToggleBlockPeer: (PeerModel) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val strings = LocalStrings.current
@@ -87,14 +86,13 @@ fun PeerRadarScreen(
     ) {
         items(peers, key = { it.nodeIdHex }) { peer ->
             val unread = unreadCounts[peer.nodeIdHex] ?: 0
-            val isBlocked = blockedTags.contains(peer.shortTag.lowercase())
             PeerCard(
                 peer = peer,
                 unreadCount = unread,
-                isBlocked = isBlocked,
+                isBlocked = peer.blocked,
                 onOpenDm = { onOpenDm(peer) },
                 onOpenVerify = { onOpenVerify(peer) },
-                onToggleBlock = { onToggleBlockTag(peer.shortTag) },
+                onToggleBlock = { onToggleBlockPeer(peer) },
             )
         }
     }
@@ -245,7 +243,7 @@ private fun PeerCard(
             IconButton(onClick = onToggleBlock) {
                 Icon(
                     imageVector = Icons.Default.Block,
-                    contentDescription = strings.toggleBlockTag,
+                    contentDescription = strings.toggleBlockPeer,
                     tint = if (isBlocked) LinkChatColors.WarningAmber else LinkChatColors.TextMuted.copy(alpha = 0.6f),
                 )
             }

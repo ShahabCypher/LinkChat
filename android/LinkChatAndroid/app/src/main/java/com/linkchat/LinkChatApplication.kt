@@ -22,8 +22,6 @@ class LinkChatApplication : Application() {
     private val _bleStatus = MutableStateFlow(BleStatus())
     val bleStatus: StateFlow<BleStatus> = _bleStatus.asStateFlow()
 
-    val blockedTags = MutableStateFlow<Set<String>>(emptySet())
-
     private val _language = MutableStateFlow(AppLanguage.DEFAULT)
     val language: StateFlow<AppLanguage> = _language.asStateFlow()
 
@@ -54,7 +52,6 @@ class LinkChatApplication : Application() {
     }
 
     fun resetAllData() {
-        blockedTags.value = emptySet()
         val handler = bleResetHandler
         pythonBridge.resetAllData(
             onBeforeCoreReset = { handler?.stopAndClearForReset() },

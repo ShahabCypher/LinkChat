@@ -4,6 +4,7 @@ import android.Manifest
 import com.linkchat.ble.BleTieBreaker
 import com.linkchat.ble.LinkChatGattProfile
 import com.linkchat.model.BleStatus
+import com.linkchat.model.PeerModel
 import com.linkchat.model.PermissionHelper
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -33,10 +34,24 @@ class TieBreakerAndModelsTest {
         assertFalse(BleTieBreaker.shouldInitiateCentral("5000", "LC-1000"))
         assertTrue(BleTieBreaker.shouldInitiateCentral("5000", "LC-5000"))
         assertTrue(BleTieBreaker.shouldInitiateCentral("5000", "Windows-PC"))
+    }
 
-        assertTrue(BleTieBreaker.isPeerBlocked("ABCD", setOf("abcd", "1234")))
-        assertFalse(BleTieBreaker.isPeerBlocked("9999", setOf("abcd")))
-        assertFalse(BleTieBreaker.isPeerBlocked(null, setOf("abcd")))
+    @Test
+    fun peerModelDefaultsAndBlockedFlag() {
+        val peer = PeerModel(
+            nodeIdHex = "a1b2c3d4e5f60708",
+            shortTag = "a1b2",
+            nickname = "Alice",
+            hopCount = 1,
+            rssi = -55,
+            direct = true,
+            connected = true,
+            verified = false,
+            keyChanged = false,
+            lastSeen = 100.0,
+        )
+        assertFalse(peer.blocked)
+        assertTrue(peer.copy(blocked = true).blocked)
     }
 
     @Test

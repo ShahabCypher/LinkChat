@@ -202,6 +202,13 @@ class PythonBridge(private val context: Context) {
         }
     }
 
+    fun setPeerBlocked(nodeIdHex: String, blocked: Boolean) {
+        executor.execute {
+            runCatching { module?.callAttr("set_peer_blocked", nodeIdHex, blocked) }
+                .onFailure { _lastError.value = it.message }
+        }
+    }
+
     fun loadHistoryIfNeeded(channelOrPeer: String) {
         executor.execute {
             if (loadedChannels.contains(channelOrPeer)) return@execute
@@ -418,6 +425,7 @@ class PythonBridge(private val context: Context) {
             keyChanged = obj.optBoolean("key_changed", false),
             lastSeen = obj.optDouble("last_seen", 0.0),
             linkHandle = if (obj.isNull("link_handle")) null else obj.optString("link_handle"),
+            blocked = obj.optBoolean("blocked", false),
         )
     }
 

@@ -35,7 +35,6 @@ data class LinkChatUiState(
     val messagesByChannel: Map<String, List<MessageModel>> = emptyMap(),
     val unreadCounts: Map<String, Int> = emptyMap(),
     val meshLogs: List<LogEntryModel> = emptyList(),
-    val blockedTags: Set<String> = emptySet(),
     val verifyState: VerifyDialogState? = null,
     val lastError: String? = null,
     val language: AppLanguage = AppLanguage.DEFAULT,
@@ -86,10 +85,9 @@ class LinkChatViewModel(application: Application) : AndroidViewModel(application
         activeTab,
         activeDmPeerId,
         verifyState,
-        app.blockedTags,
         app.language,
-    ) { tab, dmId, verify, blocked, lang ->
-        NavPart(tab, dmId, verify, blocked, lang)
+    ) { tab, dmId, verify, lang ->
+        NavPart(tab, dmId, verify, lang)
     }
 
     val uiState: StateFlow<LinkChatUiState> = combine(
@@ -119,7 +117,6 @@ class LinkChatViewModel(application: Application) : AndroidViewModel(application
             messagesByChannel = chat.msgs,
             unreadCounts = chat.unread,
             meshLogs = chat.logs,
-            blockedTags = nav.blocked,
             verifyState = refreshedVerify,
             lastError = chat.err,
             language = nav.lang,
@@ -190,11 +187,8 @@ class LinkChatViewModel(application: Application) : AndroidViewModel(application
         bridge.verifyPeer(nodeIdHex, verified)
     }
 
-    fun toggleBlockedTag(tag: String) {
-        val clean = tag.trim().lowercase()
-        if (clean.length != 4 || !clean.all { it in '0'..'9' || it in 'a'..'f' }) return
-        val current = app.blockedTags.value
-        app.blockedTags.value = if (clean in current) current - clean else current + clean
+    fun setPeerBlocked(nodeIdHex: String, blocked: Boolean) {
+        bridge.setPeerBlocked(nodeIdHex, blocked)
     }
 
     fun clearLogs() {
@@ -236,7 +230,6 @@ class LinkChatViewModel(application: Application) : AndroidViewModel(application
         val tab: MainTab,
         val dmId: String?,
         val verify: VerifyDialogState?,
-        val blocked: Set<String>,
         val lang: AppLanguage,
     )
 }

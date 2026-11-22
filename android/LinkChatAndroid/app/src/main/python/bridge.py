@@ -30,6 +30,7 @@ def _peer_to_dict(peer: PeerInfo) -> dict[str, Any]:
         "key_changed": peer.key_changed,
         "last_seen": peer.last_seen,
         "link_handle": peer.link_handle,
+        "blocked": peer.blocked,
     }
 
 
@@ -380,6 +381,17 @@ class AndroidBridge:
 
         self._submit(_op)
 
+    def set_peer_blocked(self, node_id_hex: str, blocked: bool = True) -> None:
+        async def _op() -> None:
+            if self._node is None:
+                return
+            self._node.set_peer_blocked(node_id_hex, blocked=bool(blocked))
+            peer = self._node.router.peers.get(bytes.fromhex(node_id_hex))
+            if peer is not None:
+                self._emit({"type": "peer_updated", "peer": _peer_to_dict(peer)})
+
+        self._submit(_op)
+
     def get_peers(self) -> str:
         peers = self._call_sync(lambda node: [_peer_to_dict(p) for p in node.get_peers()])
         return json.dumps(peers, ensure_ascii=False)
@@ -477,6 +489,10 @@ def set_nickname(nickname: str) -> None:
 
 def verify_peer(node_id_hex: str, verified: bool = True) -> None:
     _default_bridge.verify_peer(node_id_hex, verified)
+
+
+def set_peer_blocked(node_id_hex: str, blocked: bool = True) -> None:
+    _default_bridge.set_peer_blocked(node_id_hex, blocked)
 
 
 def get_peers() -> str:
