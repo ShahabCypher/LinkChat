@@ -46,6 +46,7 @@ import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
@@ -89,13 +90,16 @@ fun ChatScreen(
                 contentAlignment = Alignment.Center,
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    val emptyTitle = if (dmPeer == null) {
+                        strings.emptyPublicTitle
+                    } else {
+                        strings.emptyDmTitle(dmPeer.nickname)
+                    }
                     Text(
-                        text = if (dmPeer == null) {
-                            strings.emptyPublicTitle
-                        } else {
-                            strings.emptyDmTitle(dmPeer.nickname)
-                        },
-                        style = MaterialTheme.typography.titleMedium,
+                        text = styledBidiText(emptyTitle),
+                        style = MaterialTheme.typography.titleMedium.copy(
+                            textDirection = textDirectionFor(emptyTitle, defaultRtl = isRtl),
+                        ),
                         color = LinkChatColors.TextPrimary,
                     )
                     Spacer(modifier = Modifier.size(6.dp))
@@ -136,25 +140,31 @@ fun ChatScreen(
                     .padding(horizontal = 12.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
+                val draftDir = textDirectionFor(draft, defaultRtl = isRtl)
                 OutlinedTextField(
                     value = draft,
                     onValueChange = { draft = it },
                     modifier = Modifier.weight(1f),
                     textStyle = MaterialTheme.typography.bodyLarge.copy(
-                        textDirection = TextDirection.Content,
-                        fontFamily = if (isRtl || draft.any { isPersianChar(it) }) {
+                        textDirection = draftDir,
+                        textAlign = if (draftDir == TextDirection.Rtl) TextAlign.Right else TextAlign.Left,
+                        fontFamily = if (isRtl || containsPersian(draft)) {
                             VazirmatnFontFamily
                         } else {
                             null
                         },
                     ),
                     placeholder = {
+                        val placeholderText = if (dmPeer == null) {
+                            strings.composerPublicPlaceholder
+                        } else {
+                            strings.composerDmPlaceholder(dmPeer.nickname)
+                        }
                         Text(
-                            text = if (dmPeer == null) {
-                                strings.composerPublicPlaceholder
-                            } else {
-                                strings.composerDmPlaceholder(dmPeer.nickname)
-                            },
+                            text = styledBidiText(placeholderText),
+                            style = MaterialTheme.typography.bodyLarge.copy(
+                                textDirection = textDirectionFor(placeholderText, defaultRtl = isRtl),
+                            ),
                             color = LinkChatColors.TextMuted,
                         )
                     },
@@ -205,6 +215,7 @@ private fun DmEncryptionBanner(
     onOpenVerify: () -> Unit,
 ) {
     val strings = LocalStrings.current
+    val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
     val bgColor = if (peer.keyChanged) {
         LinkChatColors.DangerRed.copy(alpha = 0.16f)
     } else {
@@ -228,13 +239,16 @@ private fun DmEncryptionBanner(
             modifier = Modifier.size(16.dp),
         )
         Spacer(modifier = Modifier.width(8.dp))
+        val bannerText = when {
+            peer.keyChanged -> strings.keyChangedBanner(peer.nickname)
+            peer.verified -> strings.e2eeVerifiedBanner(peer.nickname, peer.shortTag)
+            else -> strings.e2eeActiveBanner
+        }
         Text(
-            text = when {
-                peer.keyChanged -> styledBidiText(strings.keyChangedBanner(peer.nickname))
-                peer.verified -> styledBidiText(strings.e2eeVerifiedBanner(peer.nickname, peer.shortTag))
-                else -> styledBidiText(strings.e2eeActiveBanner)
-            },
-            style = MaterialTheme.typography.labelMedium,
+            text = styledBidiText(bannerText),
+            style = MaterialTheme.typography.labelMedium.copy(
+                textDirection = textDirectionFor(bannerText, defaultRtl = isRtl),
+            ),
             color = LinkChatColors.TextPrimary,
             modifier = Modifier.weight(1f),
         )
@@ -306,9 +320,13 @@ private fun MessageBubble(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
+                        val senderLabel = msg.senderNick.ifBlank { msg.originId.take(4) }
                         Text(
-                            text = styledBidiText(msg.senderNick.ifBlank { msg.originId.take(4) }),
-                            style = MaterialTheme.typography.labelMedium.copy(lineHeight = 14.sp),
+                            text = styledBidiText(senderLabel),
+                            style = MaterialTheme.typography.labelMedium.copy(
+                                lineHeight = 14.sp,
+                                textDirection = textDirectionFor(senderLabel, defaultRtl = isRtl),
+                            ),
                             fontWeight = FontWeight.SemiBold,
                             color = LinkChatColors.AccentCyan,
                         )
@@ -330,11 +348,16 @@ private fun MessageBubble(
                     }
                 }
 
+                val msgIsRtl = isRtlText(msg.text, defaultRtl = isRtl)
                 Text(
                     text = styledBidiText(msg.text),
                     style = MaterialTheme.typography.bodyMedium.copy(
                         lineHeight = 20.sp,
-                        textDirection = TextDirection.Content,
+                        textDirection = if (msgIsRtl) TextDirection.Rtl else TextDirection.Ltr,
+                        textAlign = if (msgIsRtl) TextAlign.Right else TextAlign.Left,
+                    ),
+                    modifier = Modifier.align(
+                        if (msgIsRtl != isRtl) Alignment.End else Alignment.Start
                     ),
                     color = LinkChatColors.TextPrimary,
                 )

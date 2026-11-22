@@ -110,6 +110,7 @@ private fun PeerCard(
     onToggleBlock: () -> Unit,
 ) {
     val strings = LocalStrings.current
+    val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
 
     Card(
         colors = CardDefaults.cardColors(containerColor = LinkChatColors.BgCard),
@@ -132,8 +133,12 @@ private fun PeerCard(
                         .background(LinkChatColors.AccentCyan.copy(alpha = 0.18f)),
                     contentAlignment = Alignment.Center,
                 ) {
+                    val initials = peer.nickname.take(2).uppercase().ifBlank { "LC" }
                     Text(
-                        text = styledBidiText(peer.nickname.take(2).uppercase().ifBlank { "LC" }),
+                        text = styledBidiText(initials),
+                        style = MaterialTheme.typography.bodyMedium.copy(
+                            textDirection = textDirectionFor(initials, defaultRtl = isRtl),
+                        ),
                         fontWeight = FontWeight.Bold,
                         color = LinkChatColors.AccentCyan,
                     )
@@ -156,9 +161,12 @@ private fun PeerCard(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
+                    val displayNick = peer.nickname.ifBlank { "LC-${peer.shortTag}" }
                     Text(
-                        text = styledBidiText(peer.nickname.ifBlank { "LC-${peer.shortTag}" }),
-                        style = MaterialTheme.typography.titleSmall,
+                        text = styledBidiText(displayNick),
+                        style = MaterialTheme.typography.titleSmall.copy(
+                            textDirection = textDirectionFor(displayNick, defaultRtl = isRtl),
+                        ),
                         fontWeight = FontWeight.SemiBold,
                         color = LinkChatColors.TextPrimary,
                     )

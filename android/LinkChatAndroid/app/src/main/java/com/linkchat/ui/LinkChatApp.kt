@@ -59,6 +59,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
@@ -74,6 +75,7 @@ fun LinkChatApp(
 ) {
     val state by viewModel.uiState.collectAsState()
     val strings = LocalStrings.current
+    val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
     val snackbarHostState = remember { SnackbarHostState() }
     var showNickDialog by remember { mutableStateOf(false) }
     var showResetDialog by remember { mutableStateOf(false) }
@@ -494,14 +496,16 @@ private fun NicknameDialog(
         },
         text = {
             CompositionLocalProvider(LocalLayoutDirection provides layoutDirection) {
+                val draftDir = textDirectionFor(draft, defaultRtl = layoutDirection == LayoutDirection.Rtl)
                 OutlinedTextField(
                     value = draft,
                     onValueChange = { draft = it },
                     singleLine = true,
                     label = { Text(strings.nicknameLabel) },
                     textStyle = MaterialTheme.typography.bodyLarge.copy(
-                        textDirection = TextDirection.Content,
-                        fontFamily = if (draft.any { isPersianChar(it) } || layoutDirection == LayoutDirection.Rtl) {
+                        textDirection = draftDir,
+                        textAlign = if (draftDir == TextDirection.Rtl) TextAlign.Right else TextAlign.Left,
+                        fontFamily = if (containsPersian(draft) || layoutDirection == LayoutDirection.Rtl) {
                             VazirmatnFontFamily
                         } else {
                             null

@@ -11,6 +11,7 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextDirection
 import com.linkchat.R
 
 object LinkChatColors {
@@ -67,6 +68,23 @@ fun isPersianChar(ch: Char): Boolean {
         code in 0xFB50..0xFDFF ||
         code in 0xFE70..0xFEFF
 }
+
+fun containsPersian(text: String): Boolean = text.any { isPersianChar(it) }
+
+fun isRtlText(text: String, defaultRtl: Boolean = false): Boolean {
+    if (containsPersian(text)) return true
+    for (ch in text) {
+        when (Character.getDirectionality(ch)) {
+            Character.DIRECTIONALITY_RIGHT_TO_LEFT,
+            Character.DIRECTIONALITY_RIGHT_TO_LEFT_ARABIC -> return true
+            Character.DIRECTIONALITY_LEFT_TO_RIGHT -> return false
+        }
+    }
+    return defaultRtl
+}
+
+fun textDirectionFor(text: String, defaultRtl: Boolean = false): TextDirection =
+    if (isRtlText(text, defaultRtl)) TextDirection.Rtl else TextDirection.Ltr
 
 fun styledBidiText(text: String): AnnotatedString {
     if (text.none { isPersianChar(it) }) {

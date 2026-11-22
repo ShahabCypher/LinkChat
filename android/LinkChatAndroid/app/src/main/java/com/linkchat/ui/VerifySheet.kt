@@ -43,6 +43,7 @@ fun VerifySheet(
 ) {
     val strings = LocalStrings.current
     val layoutDirection = LocalLayoutDirection.current
+    val isRtl = layoutDirection == LayoutDirection.Rtl
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -70,9 +71,12 @@ fun VerifySheet(
                     modifier = Modifier.size(36.dp),
                 )
                 Spacer(modifier = Modifier.size(8.dp))
+                val fpTitle = strings.safetyFingerprintTitle(state.peer.nickname)
                 Text(
-                    text = styledBidiText(strings.safetyFingerprintTitle(state.peer.nickname)),
-                    style = MaterialTheme.typography.titleMedium,
+                    text = styledBidiText(fpTitle),
+                    style = MaterialTheme.typography.titleMedium.copy(
+                        textDirection = textDirectionFor(fpTitle, defaultRtl = isRtl),
+                    ),
                     fontWeight = FontWeight.Bold,
                     color = LinkChatColors.TextPrimary,
                 )
@@ -119,9 +123,12 @@ fun VerifySheet(
                     }
 
                     state.fingerprint != null -> {
+                        val compareHint = strings.compareFingerprintsHint(state.peer.nickname)
                         Text(
-                            text = styledBidiText(strings.compareFingerprintsHint(state.peer.nickname)),
-                            style = MaterialTheme.typography.bodySmall,
+                            text = styledBidiText(compareHint),
+                            style = MaterialTheme.typography.bodySmall.copy(
+                                textDirection = textDirectionFor(compareHint, defaultRtl = isRtl),
+                            ),
                             color = LinkChatColors.TextMuted,
                             textAlign = TextAlign.Center,
                         )

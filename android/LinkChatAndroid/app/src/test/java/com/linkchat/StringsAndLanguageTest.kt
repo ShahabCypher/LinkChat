@@ -1,13 +1,17 @@
 package com.linkchat
 
+import androidx.compose.ui.text.style.TextDirection
 import com.linkchat.model.BleStatus
 import com.linkchat.model.BleStatusKind
 import com.linkchat.ui.AppLanguage
 import com.linkchat.ui.EnglishStrings
 import com.linkchat.ui.PersianStrings
+import com.linkchat.ui.containsPersian
 import com.linkchat.ui.isPersianChar
+import com.linkchat.ui.isRtlText
 import com.linkchat.ui.stringsFor
 import com.linkchat.ui.styledBidiText
+import com.linkchat.ui.textDirectionFor
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -51,5 +55,21 @@ class StringsAndLanguageTest {
         val mixed = styledBidiText("Hello سلام دنیا test")
         assertEquals(1, mixed.spanStyles.size)
         assertEquals("Hello سلام دنیا test", mixed.text)
+    }
+
+    @Test
+    fun persianTextResolvesToRtlDirection() {
+        assertTrue(containsPersian("نام:"))
+        assertTrue(containsPersian("Hello سلام:"))
+        assertFalse(containsPersian("Hello #public"))
+
+        assertTrue(isRtlText("نام:", defaultRtl = false))
+        assertTrue(isRtlText("Hello سلام:", defaultRtl = false))
+        assertFalse(isRtlText("Hello world:", defaultRtl = true))
+        assertTrue(isRtlText("123", defaultRtl = true))
+        assertFalse(isRtlText("123", defaultRtl = false))
+
+        assertEquals(TextDirection.Rtl, textDirectionFor("Hello سلام:", defaultRtl = false))
+        assertEquals(TextDirection.Ltr, textDirectionFor("Hello world:", defaultRtl = true))
     }
 }
