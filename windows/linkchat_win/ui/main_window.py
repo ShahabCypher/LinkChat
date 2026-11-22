@@ -127,7 +127,7 @@ class MainWindow:
         self._id_label = ctk.CTkLabel(
             bar,
             text=self._format_id_text(),
-            font=theme.ui_font(lang, 12) if rtl else (theme.FONT_MONO, 12),
+            font=(theme.FONT_MONO, 12),
             text_color=theme.TEXT_MUTED,
         )
         self._id_label.grid(
@@ -280,12 +280,12 @@ class MainWindow:
 
         self._public_btn = ctk.CTkButton(
             sidebar,
-            text=bidi_text(tr(lang, "public_channel_btn"), rtl),
-            anchor="e" if rtl else "w",
+            text=tr(lang, "public_channel_btn"),
+            anchor="w",
             height=40,
             fg_color=theme.ACCENT_BLUE,
             hover_color=theme.ACCENT_BLUE_HOVER,
-            font=theme.ui_font(lang, 13, "bold"),
+            font=theme.ui_font("en", 13, "bold"),
             command=lambda: self._select_channel("#public"),
         )
         self._public_btn.grid(row=0, column=0, sticky="ew", padx=12, pady=(12, 8))
@@ -329,8 +329,8 @@ class MainWindow:
 
         self._channel_title = ctk.CTkLabel(
             header,
-            text=bidi_text(tr(lang, "public_channel_title"), rtl),
-            font=theme.ui_font(lang, 14, "bold"),
+            text=tr(lang, "public_channel_title"),
+            font=theme.ui_font("en", 14, "bold"),
             text_color=theme.TEXT_PRIMARY,
         )
         self._channel_title.grid(
@@ -762,7 +762,7 @@ class MainWindow:
         pub_unread = self._unread_counts.get("#public", 0)
         pub_suffix = f"  ({pub_unread})" if pub_unread else ""
         self._public_btn.configure(
-            text=bidi_text(f"{tr(lang, 'public_channel_btn')}{pub_suffix}", rtl)
+            text=f"{tr(lang, 'public_channel_btn')}{pub_suffix}"
         )
 
         if not peers:
@@ -886,7 +886,8 @@ class MainWindow:
 
         if self._active_channel == "#public":
             self._channel_title.configure(
-                text=bidi_text(tr(lang, "public_channel_title"), rtl)
+                text=tr(lang, "public_channel_title"),
+                font=theme.ui_font("en", 14, "bold"),
             )
             self._set_msg_placeholder(tr(lang, "msg_placeholder_public"))
             self._verify_btn.grid_remove()
@@ -899,7 +900,8 @@ class MainWindow:
                 text=bidi_text(
                     tr(lang, "dm_unknown_title", short_id=self._active_channel[:8]),
                     rtl,
-                )
+                ),
+                font=theme.ui_font(lang, 14, "bold"),
             )
             self._verify_btn.grid_remove()
             self._key_warning_banner.grid_remove()
@@ -916,7 +918,8 @@ class MainWindow:
                     status=status,
                 ),
                 rtl,
-            )
+            ),
+            font=theme.ui_font(lang, 14, "bold"),
         )
         self._set_msg_placeholder(tr(lang, "msg_placeholder_dm", nick=peer.nickname))
         self._verify_btn.grid()

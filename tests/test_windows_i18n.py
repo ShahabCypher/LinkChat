@@ -10,6 +10,9 @@ from linkchat_win.ui import theme
 
 def test_default_language_is_persian_and_catalogs_match() -> None:
     assert i18n.DEFAULT_LANG == "fa"
+    assert i18n.tr("fa", "id_prefix") == "ID:"
+    assert "Mesh Broadcast" in i18n.tr("fa", "public_channel_btn")
+    assert "Mesh Broadcast" in i18n.tr("fa", "public_channel_title")
     assert set(i18n.STRINGS["fa"].keys()) == set(i18n.STRINGS["en"].keys())
     for lang, catalog in i18n.STRINGS.items():
         for key, value in catalog.items():
