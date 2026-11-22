@@ -390,8 +390,6 @@ fun LinkChatApp(
 
                     MainTab.INSPECTOR -> InspectorScreen(
                         logs = state.meshLogs,
-                        blockedTags = state.blockedTags,
-                        onToggleBlockedTag = viewModel::toggleBlockedTag,
                         onClearLogs = viewModel::clearLogs,
                         modifier = Modifier.weight(1f),
                     )

@@ -48,14 +48,11 @@ import java.util.Locale
 @Composable
 fun InspectorScreen(
     logs: List<LogEntryModel>,
-    blockedTags: Set<String>,
-    onToggleBlockedTag: (String) -> Unit,
     onClearLogs: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val strings = LocalStrings.current
     var selectedFilter by rememberSaveable { mutableStateOf("ALL") }
-    var tagInput by rememberSaveable { mutableStateOf("") }
 
     val filters = listOf("ALL", "HELLO", "RELAY", "SYNC", "DM", "DROP")
     val filtered = if (selectedFilter == "ALL") {
@@ -68,59 +65,34 @@ fun InspectorScreen(
     }
 
     Column(modifier = modifier.fillMaxSize()) {
-        // Debug tag block filter for simulating physical multi-hop separation
         Surface(color = LinkChatColors.BgPanel, modifier = Modifier.fillMaxWidth()) {
-            Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    OutlinedTextField(
-                        value = tagInput,
-                        onValueChange = { if (it.length <= 4) tagInput = it },
-                        label = { Text(strings.blockTagLabel) },
-                        singleLine = true,
-                        modifier = Modifier.weight(1f),
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    OutlinedButton(
-                        onClick = {
-                            onToggleBlockedTag(tagInput)
-                            tagInput = ""
-                        },
-                        enabled = tagInput.trim().length == 4,
-                    ) {
-                        Text(strings.toggle)
-                    }
-                    IconButton(onClick = onClearLogs) {
-                        Icon(
-                            Icons.Default.DeleteOutline,
-                            contentDescription = strings.clearLogs,
-                            tint = LinkChatColors.TextMuted,
-                        )
-                    }
-                }
-                if (blockedTags.isNotEmpty()) {
-                    Spacer(modifier = Modifier.size(6.dp))
-                    Text(
-                        text = strings.blockedTagsPrefix(blockedTags.joinToString { "LC-$it" }),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = LinkChatColors.WarningAmber,
-                    )
-                }
-            }
-        }
-
-        CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState())
                     .padding(horizontal = 12.dp, vertical = 6.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                filters.forEach { f ->
-                    FilterChip(
-                        selected = selectedFilter == f,
-                        onClick = { selectedFilter = f },
-                        label = { Text(f) },
+                CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                    Row(
+                        modifier = Modifier
+                            .weight(1f)
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        filters.forEach { f ->
+                            FilterChip(
+                                selected = selectedFilter == f,
+                                onClick = { selectedFilter = f },
+                                label = { Text(f) },
+                            )
+                        }
+                    }
+                }
+                IconButton(onClick = onClearLogs) {
+                    Icon(
+                        Icons.Default.DeleteOutline,
+                        contentDescription = strings.clearLogs,
+                        tint = LinkChatColors.TextMuted,
                     )
                 }
             }
