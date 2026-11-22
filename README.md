@@ -88,10 +88,6 @@ pip install -e ".[dev,windows,build]"
 Useful CLI flags:
 - `--nickname <name>`: Set/update local display nickname.
 - `--data-dir <path>`: Use an isolated SQLite directory (defaults to `%LOCALAPPDATA%\LinkChat`).
-- `--central-only`: Force Central-Only mode (disables BLE Peripheral GATT Server).
-
-> [!NOTE]
-> If the Windows Bluetooth adapter rejects BLE Peripheral advertising, `WindowsBleTransport` automatically switches to **Central-Only** mode (amber badge in the top bar) and connects to nearby Android Peripherals as Central.
 
 ## Cross-Platform Hardware Demo Walkthrough
 

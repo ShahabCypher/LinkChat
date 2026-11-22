@@ -253,7 +253,7 @@ Key `LinkChatNode` constructor & methods:
 ### Windows Desktop App (`linkchat_win`)
 - **Storage & UI Framework**: Defaults `data_dir` to `~/.linkchat` (or `%LOCALAPPDATA%/LinkChat`). `CustomTkinter` runs on the main thread, polling a `queue.Queue` every 50 ms driven by a dedicated background `asyncio` daemon thread hosting `LinkChatNode` + `WindowsBleTransport`.
 - **Views**:
-  - **Setup / Profile Bar**: Edit local nickname, view own `node_id` & BLE mode badge (`Dual-Role` vs `Central-Only`).
+  - **Setup / Profile Bar**: Edit local nickname and view own `node_id` (all nodes run Dual-Role BLE automatically).
   - **Peer Radar Sidebar**: Live list of peers showing nickname, `Direct` or `N hops` pill, RSSI bar, and Verified (`✓`) / Key-Warning (`!`) icon. Clicking a peer opens their Encrypted DM tab or Safety Fingerprint modal.
   - **Chat Workspace**: Switchable `#public` channel and per-peer DM tabs with delivery badges (`Sending` -> `Relayed` -> `Delivered`).
   - **Mesh Inspector Drawer** (collapsible): Live trace of `HELLO`, relayed packets (`ttl`, `hop`), and `SYNC` events for university presentation demos.

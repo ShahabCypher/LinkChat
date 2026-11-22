@@ -1,4 +1,4 @@
-"""Tests for WindowsBleTransport (tie-breaker, Central-only fallback, bleak flow) and BackendBridge."""
+"""Tests for WindowsBleTransport (tie-breaker, silent Central fallback, bleak flow) and BackendBridge."""
 
 from __future__ import annotations
 
@@ -96,6 +96,13 @@ class _FakeClient:
             self.disconnected_callback(self)
 
 
+def _stub_no_peripheral(transport: WindowsBleTransport) -> None:
+    async def _no_peripheral() -> bool:
+        return False
+
+    transport._start_peripheral = _no_peripheral  # type: ignore[method-assign]
+
+
 def test_parse_linkchat_tag_and_tie_breaker() -> None:
     assert parse_linkchat_tag("LC-1a2b") == "1a2b"
     assert parse_linkchat_tag("LC-FFFF") == "ffff"
@@ -104,18 +111,19 @@ def test_parse_linkchat_tag_and_tie_breaker() -> None:
 
     dual = WindowsBleTransport("5000deadbeef0000")
     assert dual.local_tag == "5000"
+    dual._peripheral_active = True
     assert dual.should_initiate_central("LC-9000") is True
     assert dual.should_initiate_central("LC-1000") is False
     assert dual.should_initiate_central("Windows-PC") is True
 
-    central_only = WindowsBleTransport("5000deadbeef0000", force_central_only=True)
-    assert central_only.should_initiate_central("LC-1000") is True
+    # When Peripheral GATT Server failed to start, Central initiation is unrestricted.
+    dual._peripheral_active = False
+    assert dual.should_initiate_central("LC-1000") is True
 
 
-async def test_peripheral_failure_falls_back_to_central_only_and_connects() -> None:
+async def test_peripheral_failure_silently_falls_back_to_central_and_connects() -> None:
     scanners: list[_FakeScanner] = []
     clients: list[_FakeClient] = []
-    mode_events: list[bool] = []
 
     def make_scanner(**kwargs: Any) -> _FakeScanner:
         s = _FakeScanner(**kwargs)
@@ -129,16 +137,10 @@ async def test_peripheral_failure_falls_back_to_central_only_and_connects() -> N
 
     transport = WindowsBleTransport(
         "abcd111122223333",
-        on_mode_changed=mode_events.append,
         scanner_factory=make_scanner,
         client_factory=make_client,
     )
-
-    # Simulate peripheral startup rejection regardless of host Bluetooth hardware.
-    async def fail_peripheral() -> bool:
-        return False
-
-    transport._start_peripheral = fail_peripheral  # type: ignore[method-assign]
+    _stub_no_peripheral(transport)
 
     events: list[tuple[str, Any]] = []
 
@@ -155,15 +157,13 @@ async def test_peripheral_failure_falls_back_to_central_only_and_connects() -> N
     await transport.start()
 
     try:
-        assert transport.central_only is True
-        assert transport.mode_label == "Central-Only"
-        assert mode_events == [True]
+        assert transport._peripheral_active is False
 
         await asyncio.sleep(0.05)
         assert len(scanners) == 1
         assert scanners[0].started is True
 
-        # Even though peer tag 0001 < abcd, Central-only mode still connects!
+        # Even though peer tag 0001 < abcd, silent Central fallback still connects!
         dev = _FakeDevice(address="AA:BB:CC:DD:EE:FF", name="LC-0001")
         adv = _FakeAdv(local_name="LC-0001", service_uuids=[SERVICE_UUID], rssi=-58)
         scanners[0].detection_callback(dev, adv)
@@ -318,10 +318,10 @@ async def test_closed_central_link_drops_cleanly_on_send_chunk() -> None:
 
     transport = WindowsBleTransport(
         "abcd111122223333",
-        force_central_only=True,
         scanner_factory=make_scanner,
         client_factory=make_client,
     )
+    _stub_no_peripheral(transport)
 
     down_events: list[str] = []
 
@@ -370,10 +370,10 @@ async def test_disconnected_central_and_failing_peripheral_drop_on_send() -> Non
 
     transport = WindowsBleTransport(
         "abcd111122223333",
-        force_central_only=True,
         scanner_factory=lambda **kw: scanners.append(_FakeScanner(**kw)) or scanners[-1],
         client_factory=lambda dev, **kw: clients.append(_FlagClient(dev, **kw)) or clients[-1],
     )
+    _stub_no_peripheral(transport)
     down_events: list[str] = []
 
     async def noop_up(_h: str, _m: int, _r: int) -> None:
@@ -604,10 +604,10 @@ async def test_windows_ble_transport_prunes_dead_links_and_disconnect_link() -> 
 
     transport = WindowsBleTransport(
         "abcd111122223333",
-        force_central_only=True,
         scanner_factory=lambda **kw: scanners.append(_FakeScanner(**kw)) or scanners[-1],
         client_factory=lambda dev, **kw: clients.append(_FlagClient(dev, **kw)) or clients[-1],
     )
+    _stub_no_peripheral(transport)
     down_events: list[str] = []
 
     async def noop_up(_h: str, _m: int, _r: int) -> None:
@@ -819,11 +819,11 @@ async def test_windows_ble_transport_blocks_and_drops_lc_tags() -> None:
 
     transport = WindowsBleTransport(
         "abcd111122223333",
-        force_central_only=True,
         connect_cooldown_sec=0.0,
         scanner_factory=lambda **kw: scanners.append(_FakeScanner(**kw)) or scanners[-1],
         client_factory=lambda dev, **kw: clients.append(_FlagClient(dev, **kw)) or clients[-1],
     )
+    _stub_no_peripheral(transport)
     down_events: list[str] = []
 
     async def noop_up(_h: str, _m: int, _r: int) -> None:
