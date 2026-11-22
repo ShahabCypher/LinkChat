@@ -8,6 +8,7 @@ import customtkinter as ctk
 
 from linkchat_core import PeerInfo, SafetyFingerprint
 
+from ..i18n import DEFAULT_LANG, Lang, bidi_text, tr
 from . import theme
 
 
@@ -20,14 +21,17 @@ class VerifyDialog(ctk.CTkToplevel):
         peer: PeerInfo,
         fingerprint: SafetyFingerprint,
         on_verify: Callable[[str, bool], None],
+        lang: Lang = DEFAULT_LANG,
     ) -> None:
         super().__init__(master)
         theme.apply_window_icon(self)
         self._peer = peer
         self._on_verify = on_verify
+        rtl = lang == "fa"
+        edge_anchor = "e" if rtl else "w"
 
-        self.title(f"Verify {peer.nickname}")
-        self.geometry("460x390")
+        self.title(tr(lang, "verify_title", nick=peer.nickname))
+        self.geometry("460x400")
         self.resizable(False, False)
         self.configure(fg_color=theme.BG_ROOT)
         self.transient(master)
@@ -44,36 +48,44 @@ class VerifyDialog(ctk.CTkToplevel):
 
         ctk.CTkLabel(
             container,
-            text=f"Safety Fingerprint — {peer.nickname}",
-            font=(theme.FONT_FAMILY, 16, "bold"),
+            text=bidi_text(tr(lang, "safety_fingerprint_title", nick=peer.nickname), rtl),
+            font=theme.ui_font(lang, 16, "bold"),
             text_color=theme.TEXT_PRIMARY,
-        ).pack(anchor="w", padx=16, pady=(14, 2))
+        ).pack(anchor=edge_anchor, padx=16, pady=(14, 2))
 
+        id_row = ctk.CTkFrame(container, fg_color="transparent")
+        id_row.pack(fill="x", padx=16, pady=(0, 10))
         ctk.CTkLabel(
-            container,
-            text=f"Node ID: {peer.node_id_hex}",
+            id_row,
+            text=tr(lang, "node_id_prefix"),
+            font=theme.ui_font(lang, 11),
+            text_color=theme.TEXT_MUTED,
+        ).pack(side="right" if rtl else "left", padx=(4 if rtl else 0, 0 if rtl else 4))
+        ctk.CTkLabel(
+            id_row,
+            text=peer.node_id_hex,
             font=(theme.FONT_MONO, 11),
             text_color=theme.TEXT_MUTED,
-        ).pack(anchor="w", padx=16, pady=(0, 10))
+        ).pack(side="right" if rtl else "left")
 
         if peer.key_changed:
             warn = ctk.CTkFrame(container, fg_color="#451A1A", corner_radius=8)
             warn.pack(fill="x", padx=16, pady=(0, 10))
             ctk.CTkLabel(
                 warn,
-                text="⚠ Key changed since first contact! Verify in person before trusting.",
-                font=(theme.FONT_FAMILY, 12, "bold"),
+                text=bidi_text(tr(lang, "verify_key_changed_warn"), rtl),
+                font=theme.ui_font(lang, 12, "bold"),
                 text_color="#FCA5A5",
                 wraplength=390,
-                justify="left",
+                justify="right" if rtl else "left",
             ).pack(padx=10, pady=8)
 
         emoji_box = ctk.CTkFrame(container, fg_color=theme.BG_CARD, corner_radius=10)
         emoji_box.pack(fill="x", padx=16, pady=(0, 10))
         ctk.CTkLabel(
             emoji_box,
-            text="6-Emoji Fingerprint",
-            font=(theme.FONT_FAMILY, 11),
+            text=tr(lang, "emoji_fp_label"),
+            font=theme.ui_font(lang, 11),
             text_color=theme.TEXT_MUTED,
         ).pack(pady=(8, 2))
         ctk.CTkLabel(
@@ -87,8 +99,8 @@ class VerifyDialog(ctk.CTkToplevel):
         num_box.pack(fill="x", padx=16, pady=(0, 12))
         ctk.CTkLabel(
             num_box,
-            text="30-Digit Safety Number",
-            font=(theme.FONT_FAMILY, 11),
+            text=tr(lang, "safety_num_label"),
+            font=theme.ui_font(lang, 11),
             text_color=theme.TEXT_MUTED,
         ).pack(pady=(8, 2))
         line1 = "   ".join(fingerprint.groups[:3])
@@ -103,8 +115,8 @@ class VerifyDialog(ctk.CTkToplevel):
 
         ctk.CTkLabel(
             container,
-            text="Compare both fingerprints side-by-side with your peer.",
-            font=(theme.FONT_FAMILY, 11),
+            text=bidi_text(tr(lang, "verify_compare_hint"), rtl),
+            font=theme.ui_font(lang, 11),
             text_color=theme.TEXT_MUTED,
         ).pack(pady=(0, 10))
 
@@ -112,7 +124,7 @@ class VerifyDialog(ctk.CTkToplevel):
         btn_row.pack(fill="x", padx=16, pady=(0, 14))
 
         next_verified = not peer.verified
-        btn_text = "Mark Verified ✓" if next_verified else "Revoke Verification"
+        btn_text = tr(lang, "mark_verified") if next_verified else tr(lang, "revoke_verification")
         btn_color = theme.STATUS_GREEN if next_verified else theme.STATUS_AMBER
 
         ctk.CTkButton(
@@ -121,18 +133,24 @@ class VerifyDialog(ctk.CTkToplevel):
             fg_color=btn_color,
             hover_color=theme.ACCENT_BLUE_HOVER,
             text_color="#0B1117",
-            font=(theme.FONT_FAMILY, 12, "bold"),
+            font=theme.ui_font(lang, 12, "bold"),
             command=lambda: self._handle_verify(next_verified),
-        ).pack(side="left", expand=True, fill="x", padx=(0, 8))
+        ).pack(
+            side="right" if rtl else "left",
+            expand=True,
+            fill="x",
+            padx=(8 if rtl else 0, 0 if rtl else 8),
+        )
 
         ctk.CTkButton(
             btn_row,
-            text="Close",
+            text=tr(lang, "close"),
             width=90,
             fg_color=theme.BG_CARD,
             hover_color=theme.BG_CARD_ACTIVE,
+            font=theme.ui_font(lang, 12),
             command=self.destroy,
-        ).pack(side="right")
+        ).pack(side="left" if rtl else "right")
 
     def _handle_verify(self, verified: bool) -> None:
         self._on_verify(self._peer.node_id_hex, verified)
