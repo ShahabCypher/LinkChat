@@ -508,3 +508,80 @@ async def test_retired_identity_and_sync_replay_do_not_show_offline_peer_online(
         await alice.stop()
         await bob.stop()
         await carol.stop()
+
+
+async def test_silent_direct_and_multihop_peer_go_offline_after_stale_timeout(
+    tmp_path: Path,
+) -> None:
+    """Both direct and multi-hop peers expire cleanly when HELLOs stop arriving."""
+    hub = NetworkHub()
+    alice = LinkChatNode(
+        tmp_path / "Alice",
+        VirtualTransport("Alice", hub),
+        nickname="Alice",
+        stale_timeout_sec=0.35,
+        hello_interval_sec=5.0,
+        jitter_range=(0.002, 0.005),
+    )
+    bob = LinkChatNode(
+        tmp_path / "Bob",
+        VirtualTransport("Bob", hub),
+        nickname="Bob",
+        stale_timeout_sec=0.35,
+        hello_interval_sec=5.0,
+        jitter_range=(0.002, 0.005),
+    )
+    carol = LinkChatNode(
+        tmp_path / "Carol",
+        VirtualTransport("Carol", hub),
+        nickname="Carol",
+        stale_timeout_sec=0.35,
+        hello_interval_sec=5.0,
+        jitter_range=(0.002, 0.005),
+    )
+
+    disconnected_handles: list[str] = []
+
+    async def fake_disconnect_link(handle: str) -> None:
+        disconnected_handles.append(handle)
+
+    alice.transport.disconnect_link = fake_disconnect_link  # type: ignore[attr-defined]
+
+    alice_updates: list[tuple[bytes, bool]] = []
+    alice.on_peer_updated = lambda p: alice_updates.append((p.node_id, p.connected))
+
+    await alice.start()
+    await bob.start()
+    await carol.start()
+    try:
+        # Defaults use responsive liveness timeouts (not 90s).
+        default_node = LinkChatNode(tmp_path / "Def", VirtualTransport("Def", hub))
+        assert default_node.router.stale_timeout_sec == 16.0
+        assert default_node.router.hello_interval_sec == 5.0
+        default_node.storage.close()
+
+        await hub.connect("Alice", "Bob", latency_ms=2.0)
+        await hub.connect("Bob", "Carol", latency_ms=2.0)
+        await _wait_until(lambda: len(alice.get_peers()) == 2)
+
+        # Silence Bob & Carol without triggering on_link_down (simulates silent BLE drop).
+        bob.router._started = False
+        carol.router._started = False
+
+        await _wait_until(
+            lambda: all(not p.connected for p in alice.get_peers()),
+            timeout=2.0,
+        )
+        bob_peer = alice.router.peers[bob.node_id]
+        carol_peer = alice.router.peers[carol.node_id]
+        assert bob_peer.connected is False
+        assert bob_peer.direct is False
+        assert bob_peer.link_handle is None
+        assert carol_peer.connected is False
+        assert disconnected_handles == ["Bob"]
+        assert (bob.node_id, False) in alice_updates
+        assert (carol.node_id, False) in alice_updates
+    finally:
+        await alice.stop()
+        await bob.stop()
+        await carol.stop()

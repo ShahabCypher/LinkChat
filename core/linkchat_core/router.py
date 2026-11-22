@@ -63,9 +63,9 @@ class MeshRouter:
         nickname: str,
         storage: Storage,
         transport: TransportAdapter,
-        stale_timeout_sec: float = 90.0,
+        stale_timeout_sec: float = 16.0,
         jitter_range: tuple[float, float] = (0.015, 0.060),
-        hello_interval_sec: float = 20.0,
+        hello_interval_sec: float = 5.0,
     ) -> None:
         self.identity = identity
         self.nickname = nickname
@@ -194,21 +194,32 @@ class MeshRouter:
         await self._emit(self.on_mesh_log, entry)
 
     async def _maintenance_loop(self) -> None:
+        tick_sec = min(2.0, max(0.05, self.stale_timeout_sec / 4.0))
         while self._started:
-            await asyncio.sleep(5.0)
+            await asyncio.sleep(tick_sec)
             self.assembler.purge_expired()
             now = time.time()
-            for peer in self.peers.values():
-                if (
-                    peer.connected
-                    and not peer.direct
-                    and (now - peer.last_seen) > self.stale_timeout_sec
-                ):
-                    peer.connected = False
-                    self._known_hellos.pop(peer.node_id, None)
-                    await self._emit(self.on_peer_updated, peer)
+            for peer in list(self.peers.values()):
+                if peer.connected and (now - peer.last_seen) > self.stale_timeout_sec:
+                    await self._expire_stale_peer(peer)
             if self.links and (time.monotonic() - self._last_hello_at) >= self.hello_interval_sec:
                 await self.broadcast_hello()
+
+    async def _expire_stale_peer(self, peer: PeerInfo) -> None:
+        stale_handle = peer.link_handle if peer.direct else None
+        if stale_handle is not None and stale_handle in self.links:
+            await self._on_link_down(stale_handle)
+            disconnect_fn = getattr(self.transport, "disconnect_link", None)
+            if disconnect_fn is not None:
+                res = disconnect_fn(stale_handle)
+                if inspect.isawaitable(res):
+                    await res
+            return
+        peer.connected = False
+        peer.direct = False
+        peer.link_handle = None
+        self._known_hellos.pop(peer.node_id, None)
+        await self._emit(self.on_peer_updated, peer)
 
     async def _send_packet_to_link(self, handle: str, raw_packet: bytes) -> bool:
         link = self.links.get(handle)
@@ -267,8 +278,10 @@ class MeshRouter:
     async def _on_link_down(self, handle: str) -> None:
         link = self.links.pop(handle, None)
         self.assembler.clear_peer(handle)
+        if link is None:
+            return
         await self._log("LINK_DOWN", f"Link down {handle}")
-        if link is not None and link.peer_node_id is not None:
+        if link.peer_node_id is not None:
             peer = self.peers.get(link.peer_node_id)
             if peer is not None and peer.link_handle == handle:
                 alt = next(

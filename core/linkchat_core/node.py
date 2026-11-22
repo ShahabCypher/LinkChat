@@ -23,8 +23,9 @@ class LinkChatNode:
         data_dir: str | Path,
         transport: TransportAdapter,
         nickname: str | None = None,
-        stale_timeout_sec: float = 90.0,
+        stale_timeout_sec: float = 16.0,
         jitter_range: tuple[float, float] = (0.015, 0.060),
+        hello_interval_sec: float = 5.0,
     ) -> None:
         self.storage = Storage(data_dir)
         self.identity, self._nickname = self.storage.load_or_create_identity(nickname)
@@ -36,6 +37,7 @@ class LinkChatNode:
             transport=transport,
             stale_timeout_sec=stale_timeout_sec,
             jitter_range=jitter_range,
+            hello_interval_sec=hello_interval_sec,
         )
 
     @property
