@@ -111,7 +111,6 @@ class BackendBridge:
         self._stop_event: asyncio.Event | None = None
         self._node: LinkChatNode | None = None
         self._transport: Any = None
-        self._blocked_tags: set[str] = set()
         self._ready = threading.Event()
 
     def start(self) -> None:
@@ -168,17 +167,6 @@ class BackendBridge:
             transport.set_node_id(node.node_id_hex)
 
         def _handle_peer_updated(peer: PeerInfo) -> None:
-            if (
-                peer.direct
-                and peer.connected
-                and peer.link_handle
-                and hasattr(transport, "register_peer_link_tag")
-            ):
-                asyncio.create_task(
-                    transport.register_peer_link_tag(
-                        peer.link_handle, peer.node_id_hex[:4]
-                    )
-                )
             self.events.put(PeerUpdatedEvent(replace(peer)))
 
         node.on_peer_updated = _handle_peer_updated
@@ -190,8 +178,6 @@ class BackendBridge:
         node.on_mesh_log = lambda entry: self.events.put(MeshLogEvent(entry))
         self._node = node
 
-        if self._blocked_tags and hasattr(transport, "set_blocked_tags"):
-            await transport.set_blocked_tags(self._blocked_tags)
         await node.start()
 
         self.events.put(
@@ -287,33 +273,19 @@ class BackendBridge:
 
         self._submit(_op)
 
-    def set_blocked_tags(self, tags: set[str]) -> None:
-        cleaned = {t.strip().lower() for t in tags if t and t.strip()}
-        self._blocked_tags = cleaned
-
-        async def _op(node: LinkChatNode) -> None:
-            transport = self._transport
-            if transport is None:
-                return
-            if hasattr(transport, "register_peer_link_tag"):
-                for peer in node.router.peers.values():
-                    if peer.link_handle:
-                        await transport.register_peer_link_tag(
-                            peer.link_handle, peer.node_id_hex[:4]
-                        )
-            if hasattr(transport, "set_blocked_tags"):
-                await transport.set_blocked_tags(cleaned)
+    def set_peer_blocked(self, node_id_hex: str, blocked: bool = True) -> None:
+        def _op(node: LinkChatNode) -> None:
+            node.set_peer_blocked(node_id_hex, blocked=blocked)
+            peer = node.router.peers.get(bytes.fromhex(node_id_hex))
+            if peer is not None:
+                self.events.put(PeerUpdatedEvent(replace(peer)))
 
         self._submit(_op)
 
     def reset_all(self) -> None:
         self.nickname = None
-        self._blocked_tags = set()
 
         async def _op(node: LinkChatNode) -> None:
-            transport = self._transport
-            if transport is not None and hasattr(transport, "set_blocked_tags"):
-                await transport.set_blocked_tags(set())
             await node.reset_all()
             self.events.put(
                 NodeResetEvent(

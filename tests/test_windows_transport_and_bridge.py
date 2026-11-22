@@ -27,7 +27,6 @@ from linkchat_win.app import (
 )
 from linkchat_win.ble_transport import (
     WindowsBleTransport,
-    is_peer_blocked,
     parse_linkchat_tag,
 )
 
@@ -800,104 +799,10 @@ def test_windows_peer_radar_skips_redraw_on_heartbeat_and_updates_in_place() -> 
     assert win._peer_cards[peer1.node_id_hex]["hop_lbl"].configured["text"] == "Offline"
 
 
-async def test_windows_ble_transport_blocks_and_drops_lc_tags() -> None:
-    assert is_peer_blocked("ABCD", {"abcd", "1234"}) is True
-    assert is_peer_blocked("9999", {"abcd"}) is False
-    assert is_peer_blocked(None, {"abcd"}) is False
-
-    scanners: list[_FakeScanner] = []
-    clients: list[_FakeClient] = []
-
-    class _FlagClient(_FakeClient):
-        def __init__(self, device: _FakeDevice, disconnected_callback: Any = None) -> None:
-            super().__init__(device, disconnected_callback=disconnected_callback)
-            self.is_connected = True
-
-        async def disconnect(self) -> None:
-            self.is_connected = False
-            await super().disconnect()
-
-    transport = WindowsBleTransport(
-        "abcd111122223333",
-        connect_cooldown_sec=0.0,
-        scanner_factory=lambda **kw: scanners.append(_FakeScanner(**kw)) or scanners[-1],
-        client_factory=lambda dev, **kw: clients.append(_FlagClient(dev, **kw)) or clients[-1],
-    )
-    _stub_no_peripheral(transport)
-    down_events: list[str] = []
-
-    async def noop_up(_h: str, _m: int, _r: int) -> None:
-        pass
-
-    async def on_down(h: str) -> None:
-        down_events.append(h)
-
-    async def noop_chunk(_h: str, _d: bytes) -> None:
-        pass
-
-    transport.set_callbacks(noop_up, on_down, noop_chunk)
-    await transport.start()
-    try:
-        await asyncio.sleep(0.05)
-
-        # Blocked advertisement before connect is ignored.
-        await transport.set_blocked_tags({"1111"})
-        blocked_dev = _FakeDevice(address="AA:00:00:00:11:11", name="LC-1111")
-        blocked_adv = _FakeAdv(local_name="LC-1111", service_uuids=[SERVICE_UUID], rssi=-50)
-        scanners[0].detection_callback(blocked_dev, blocked_adv)
-        await asyncio.sleep(0.05)
-        assert len(clients) == 0
-
-        # Allowed peer connects, then blocking its tag drops the active link.
-        allowed_dev = _FakeDevice(address="AA:00:00:00:22:22", name="LC-2222")
-        allowed_adv = _FakeAdv(local_name="LC-2222", service_uuids=[SERVICE_UUID], rssi=-52)
-        scanners[0].detection_callback(allowed_dev, allowed_adv)
-        await asyncio.sleep(0.05)
-        assert len(clients) == 1
-        c_handle = "ble-c:AA:00:00:00:22:22"
-        assert c_handle in transport._central_links
-
-        await transport.set_blocked_tags({"2222"})
-        assert c_handle not in transport._central_links
-        assert c_handle in down_events
-        assert clients[0].is_connected is False
-
-        # Peripheral link registered by tag is also dropped when blocked.
-        from linkchat_win.ble_transport import _PeripheralLink
-
-        class _FakeSession:
-            def __init__(self) -> None:
-                self.closed = False
-
-            def close(self) -> None:
-                self.closed = True
-
-        class _FakeSub:
-            def __init__(self) -> None:
-                self.session = _FakeSession()
-
-        sub = _FakeSub()
-        p_handle = "ble-p:dev-99"
-        transport._peripheral_links[p_handle] = _PeripheralLink(
-            handle=p_handle, device_id="dev-99", mtu=247, subscribed_client=sub
-        )
-        await transport.register_peer_link_tag(p_handle, "9999")
-        await transport.set_blocked_tags({"9999"})
-        assert sub.session.closed is True
-        assert p_handle not in transport._peripheral_links
-        assert p_handle in down_events
-
-        # Unblocking allows scan reconnect.
-        await transport.set_blocked_tags(set())
-        scanners[0].detection_callback(allowed_dev, allowed_adv)
-        await asyncio.sleep(0.05)
-        assert len(clients) == 2
-        assert c_handle in transport._central_links
-    finally:
-        await transport.stop()
-
-
-def test_windows_peer_radar_block_button_toggles_tag_and_notifies_bridge() -> None:
+def test_windows_peer_radar_block_button_toggles_peer_block_and_composer(
+    tmp_path: Path,
+) -> None:
+    from dataclasses import replace as dc_replace
     from linkchat_core import PeerInfo
     from linkchat_win.ui.main_window import MainWindow
 
@@ -906,9 +811,19 @@ def test_windows_peer_radar_block_button_toggles_tag_and_notifies_bridge() -> No
             self.configured: dict[str, Any] = {}
             self.destroyed = False
             self.grid_visible = True
+            self.text_value = ""
 
         def configure(self, **kwargs: Any) -> None:
             self.configured.update(kwargs)
+
+        def cget(self, key: str) -> Any:
+            return self.configured.get(key, "")
+
+        def get(self) -> str:
+            return self.text_value
+
+        def delete(self, *_args: Any) -> None:
+            self.text_value = ""
 
         def winfo_exists(self) -> bool:
             return not self.destroyed
@@ -924,10 +839,21 @@ def test_windows_peer_radar_block_button_toggles_tag_and_notifies_bridge() -> No
 
     class _FakeBridge:
         def __init__(self) -> None:
-            self.blocked_calls: list[set[str]] = []
+            self.blocked_calls: list[tuple[str, bool]] = []
+            self.dm_calls: list[tuple[str, str]] = []
+            self.public_calls: list[str] = []
 
-        def set_blocked_tags(self, tags: set[str]) -> None:
-            self.blocked_calls.append(set(tags))
+        def set_peer_blocked(self, node_id_hex: str, blocked: bool) -> None:
+            self.blocked_calls.append((node_id_hex, blocked))
+
+        def send_dm(self, target_id_hex: str, text: str) -> None:
+            self.dm_calls.append((target_id_hex, text))
+
+        def send_public(self, text: str) -> None:
+            self.public_calls.append(text)
+
+        def request_history(self, _ch: str) -> None:
+            pass
 
     class _FakeContainer:
         def __init__(self) -> None:
@@ -942,15 +868,27 @@ def test_windows_peer_radar_block_button_toggles_tag_and_notifies_bridge() -> No
     win._own_node_id = "0000111122223333"
     win._active_channel = "#public"
     win._peers = {}
-    win._blocked_tags = set()
     win._peer_cards = {}
     win._rendered_peer_order = []
     win._empty_radar_label = None
     win._unread_counts = {}
+    win._loaded_channels = {"#public"}
+    win._messages = {"#public": []}
+    win._status_labels = {}
     win._radar_title = _FakeWidget()  # type: ignore[assignment]
     win._connecting_badge = _FakeWidget()  # type: ignore[assignment]
     win._public_btn = _FakeWidget()  # type: ignore[assignment]
+    win._channel_title = _FakeWidget()  # type: ignore[assignment]
+    win._verify_btn = _FakeWidget()  # type: ignore[assignment]
+    win._key_warning_banner = _FakeWidget()  # type: ignore[assignment]
+    win._dm_blocked_banner = _FakeWidget()  # type: ignore[assignment]
+    win._msg_entry = _FakeWidget()  # type: ignore[assignment]
+    win._send_btn = _FakeWidget()  # type: ignore[assignment]
+    win._chat_scroll = _FakeContainer()  # type: ignore[assignment]
     win._peer_list_frame = _FakeContainer()  # type: ignore[assignment]
+    win._sync_entry_bidi = lambda: None  # type: ignore[method-assign]
+    win._scroll_chat_to_bottom = lambda: None  # type: ignore[method-assign]
+    win._set_msg_placeholder = lambda text: win._msg_entry.configure(placeholder_text=text)  # type: ignore[method-assign]
 
     def _fake_render(_idx: int, peer: PeerInfo) -> dict[str, Any]:
         card = _FakeWidget()
@@ -987,12 +925,68 @@ def test_windows_peer_radar_block_button_toggles_tag_and_notifies_bridge() -> No
     btn = win._peer_cards[peer.node_id_hex]["block_btn"]
     assert btn.configured["text"] == "Block"
 
-    win._toggle_block_tag("A1B2")
-    assert win._blocked_tags == {"a1b2"}
-    assert win.bridge.blocked_calls[-1] == {"a1b2"}
+    # Blocking toggles through bridge.set_peer_blocked and updates UI when PeerUpdated arrives.
+    win._toggle_peer_blocked(peer.node_id_hex)
+    assert win.bridge.blocked_calls[-1] == (peer.node_id_hex, True)
+
+    blocked_peer = dc_replace(peer, blocked=True)
+    win._on_peer_updated(blocked_peer)
     assert btn.configured["text"] == "Blocked"
 
-    win._toggle_block_tag("a1b2")
-    assert win._blocked_tags == set()
-    assert win.bridge.blocked_calls[-1] == set()
+    # Opening blocked DM disables composer and shows Blocked banner, while #public stays enabled.
+    win._select_channel(peer.node_id_hex)
+    assert win._dm_blocked_banner.grid_visible is True
+    assert win._msg_entry.configured["state"] == "disabled"
+    assert win._send_btn.configured["state"] == "disabled"
+    win._msg_entry.text_value = "should not send"
+    win._send_message()
+    assert win.bridge.dm_calls == []
+
+    win._select_channel("#public")
+    assert win._dm_blocked_banner.grid_visible is False
+    assert win._msg_entry.configured["state"] == "normal"
+    assert win._send_btn.configured["state"] == "normal"
+
+    # Unblocking via active DM banner re-enables composer.
+    win._select_channel(peer.node_id_hex)
+    win._unblock_active_peer()
+    assert win.bridge.blocked_calls[-1] == (peer.node_id_hex, False)
+    win._on_peer_updated(dc_replace(peer, blocked=False))
     assert btn.configured["text"] == "Block"
+    assert win._dm_blocked_banner.grid_visible is False
+    assert win._msg_entry.configured["state"] == "normal"
+    assert win._send_btn.configured["state"] == "normal"
+
+    # Verify BackendBridge.set_peer_blocked persists to LinkChatNode and emits PeerUpdatedEvent.
+    bridge = BackendBridge(
+        data_dir=tmp_path / "win_bridge",
+        nickname="WinNode",
+        transport_factory=lambda: VirtualTransport("WinNode", NetworkHub()),
+    )
+    bridge.start()
+    try:
+        assert bridge.wait_ready(timeout=4.0)
+        assert bridge._node is not None
+        # Seed a peer on the bridge's asyncio thread so set_peer_blocked updates PeerInfo and emits PeerUpdatedEvent.
+        async def _seed() -> None:
+            assert bridge._node is not None
+            bridge._node.storage.upsert_peer(
+                peer.node_id, peer.nickname, peer.ed25519_pub, peer.x25519_pub
+            )
+            bridge._node.router.peers[peer.node_id] = dc_replace(peer)
+
+        assert bridge._loop is not None
+        asyncio.run_coroutine_threadsafe(_seed(), bridge._loop).result(timeout=2.0)
+        bridge.set_peer_blocked(peer.node_id_hex, True)
+        deadline = time.monotonic() + 2.0
+        found = False
+        while time.monotonic() < deadline and not found:
+            try:
+                ev = bridge.events.get(timeout=0.05)
+            except queue.Empty:
+                continue
+            if isinstance(ev, PeerUpdatedEvent) and ev.peer.node_id_hex == peer.node_id_hex:
+                found = ev.peer.blocked is True
+        assert found is True
+    finally:
+        bridge.stop()

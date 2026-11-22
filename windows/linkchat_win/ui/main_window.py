@@ -55,7 +55,6 @@ class MainWindow:
         self._active_channel = "#public"
         self._inspector_visible = False
         self._peers: dict[str, PeerInfo] = {}
-        self._blocked_tags: set[str] = set()
         self._peer_cards: dict[str, dict[str, Any]] = {}
         self._rendered_peer_order: list[str] = []
         self._empty_radar_label: ctk.CTkLabel | None = None
@@ -300,7 +299,7 @@ class MainWindow:
 
         workspace = ctk.CTkFrame(self.root, fg_color=theme.BG_ROOT, corner_radius=0)
         workspace.grid(row=1, column=column, sticky="nsew")
-        workspace.grid_rowconfigure(2, weight=1)
+        workspace.grid_rowconfigure(3, weight=1)
         workspace.grid_columnconfigure(0, weight=1)
 
         header = ctk.CTkFrame(
@@ -354,10 +353,35 @@ class MainWindow:
         ).pack(side="right" if rtl else "left", padx=14, pady=6)
         self._key_warning_banner.grid_remove()
 
+        self._dm_blocked_banner = ctk.CTkFrame(
+            workspace, fg_color="#452A1A", corner_radius=0
+        )
+        self._dm_blocked_banner.grid(row=2, column=0, sticky="ew")
+        ctk.CTkLabel(
+            self._dm_blocked_banner,
+            text=bidi_text(tr(lang, "dm_blocked_banner"), rtl),
+            font=theme.ui_font(lang, 12, "bold"),
+            text_color="#FCD34D",
+            justify="right" if rtl else "left",
+        ).pack(side="right" if rtl else "left", padx=14, pady=6)
+        self._unblock_banner_btn = ctk.CTkButton(
+            self._dm_blocked_banner,
+            text=bidi_text(tr(lang, "unblock_btn"), rtl),
+            width=96,
+            height=26,
+            fg_color="#78350F",
+            hover_color="#92400E",
+            text_color="#FCD34D",
+            font=theme.ui_font(lang, 11, "bold"),
+            command=self._unblock_active_peer,
+        )
+        self._unblock_banner_btn.pack(side="left" if rtl else "right", padx=14, pady=6)
+        self._dm_blocked_banner.grid_remove()
+
         self._chat_scroll = ctk.CTkScrollableFrame(
             workspace, fg_color=theme.BG_ROOT
         )
-        self._chat_scroll.grid(row=2, column=0, sticky="nsew", padx=10, pady=8)
+        self._chat_scroll.grid(row=3, column=0, sticky="nsew", padx=10, pady=8)
         self._chat_scroll.grid_columnconfigure(0, weight=1)
 
         composer = ctk.CTkFrame(
@@ -367,7 +391,7 @@ class MainWindow:
             border_width=1,
             border_color=theme.BORDER_SUBTLE,
         )
-        composer.grid(row=3, column=0, sticky="ew")
+        composer.grid(row=4, column=0, sticky="ew")
         composer.grid_columnconfigure(1 if rtl else 0, weight=1)
 
         self._msg_entry = ctk.CTkEntry(
@@ -389,7 +413,7 @@ class MainWindow:
         self._msg_entry.bind("<Return>", lambda _e: self._send_message())
         self._msg_entry.bind("<KeyRelease>", lambda _e: self._sync_entry_bidi())
 
-        ctk.CTkButton(
+        self._send_btn = ctk.CTkButton(
             composer,
             text=bidi_text(tr(lang, "send"), rtl),
             width=88,
@@ -398,7 +422,8 @@ class MainWindow:
             hover_color=theme.ACCENT_BLUE_HOVER,
             font=theme.ui_font(lang, 13, "bold"),
             command=self._send_message,
-        ).grid(
+        )
+        self._send_btn.grid(
             row=0,
             column=0 if rtl else 1,
             padx=(12, 0) if rtl else (0, 12),
@@ -605,6 +630,7 @@ class MainWindow:
             peer.connected,
             peer.verified,
             peer.key_changed,
+            peer.blocked,
         )
 
     def _on_peer_updated(self, peer: PeerInfo) -> None:
@@ -693,7 +719,6 @@ class MainWindow:
         self._nickname = ev.nickname
         self._active_channel = "#public"
         self._peers.clear()
-        self._blocked_tags.clear()
         self._messages = {"#public": []}
         self._seen_msg_ids = {"#public": set()}
         self._unread_counts.clear()
@@ -863,7 +888,7 @@ class MainWindow:
             height=20,
             corner_radius=6,
             font=theme.ui_font(lang, 10, "bold"),
-            command=lambda tag=peer.node_id_hex[:4]: self._toggle_block_tag(tag),
+            command=lambda pid=peer.node_id_hex: self._toggle_peer_blocked(pid),
         )
         block_btn.grid(
             row=0,
@@ -918,15 +943,13 @@ class MainWindow:
 
         block_btn = widgets.get("block_btn")
         if block_btn is not None:
-            short_tag = peer.node_id_hex[:4].lower()
-            is_blocked = short_tag in getattr(self, "_blocked_tags", set())
-            if is_blocked:
+            if peer.blocked:
                 block_btn.configure(
                     text=bidi_text(tr(lang, "blocked_btn"), rtl),
                     fg_color="#78350F",
                     hover_color="#92400E",
                     text_color="#FCD34D",
-                    command=lambda tag=short_tag: self._toggle_block_tag(tag),
+                    command=lambda pid=peer.node_id_hex: self._toggle_peer_blocked(pid),
                 )
             else:
                 block_btn.configure(
@@ -934,19 +957,17 @@ class MainWindow:
                     fg_color=theme.BG_PANEL,
                     hover_color=theme.BORDER_SUBTLE,
                     text_color=theme.TEXT_MUTED,
-                    command=lambda tag=short_tag: self._toggle_block_tag(tag),
+                    command=lambda pid=peer.node_id_hex: self._toggle_peer_blocked(pid),
                 )
 
-    def _toggle_block_tag(self, short_tag: str) -> None:
-        clean = short_tag.strip().lower()
-        if len(clean) != 4 or not all(ch in "0123456789abcdef" for ch in clean):
-            return
-        if clean in self._blocked_tags:
-            self._blocked_tags.remove(clean)
-        else:
-            self._blocked_tags.add(clean)
-        self.bridge.set_blocked_tags(set(self._blocked_tags))
-        self._refresh_peer_radar()
+    def _toggle_peer_blocked(self, node_id_hex: str) -> None:
+        peer = self._peers.get(node_id_hex)
+        next_blocked = not peer.blocked if peer is not None else True
+        self.bridge.set_peer_blocked(node_id_hex, next_blocked)
+
+    def _unblock_active_peer(self) -> None:
+        if self._active_channel != "#public":
+            self.bridge.set_peer_blocked(self._active_channel, False)
 
     @staticmethod
     def _trust_badge(peer: PeerInfo) -> tuple[str, str]:
@@ -967,6 +988,12 @@ class MainWindow:
         if focused:
             self._msg_entry._deactivate_placeholder()
 
+    def _set_composer_enabled(self, enabled: bool, placeholder: str) -> None:
+        state = "normal" if enabled else "disabled"
+        self._msg_entry.configure(state=state)
+        self._send_btn.configure(state=state)
+        self._set_msg_placeholder(placeholder)
+
     def _update_channel_header(self) -> None:
         lang = self._lang
         rtl = self._is_rtl
@@ -976,9 +1003,12 @@ class MainWindow:
                 text=tr(lang, "public_channel_title"),
                 font=theme.ui_font("en", 14, "bold"),
             )
-            self._set_msg_placeholder(bidi_text(tr(lang, "msg_placeholder_public"), rtl))
             self._verify_btn.grid_remove()
             self._key_warning_banner.grid_remove()
+            self._dm_blocked_banner.grid_remove()
+            self._set_composer_enabled(
+                True, bidi_text(tr(lang, "msg_placeholder_public"), rtl)
+            )
             return
 
         peer = self._peers.get(self._active_channel)
@@ -992,6 +1022,10 @@ class MainWindow:
             )
             self._verify_btn.grid_remove()
             self._key_warning_banner.grid_remove()
+            self._dm_blocked_banner.grid_remove()
+            self._set_composer_enabled(
+                True, bidi_text(tr(lang, "msg_placeholder_public"), rtl)
+            )
             return
 
         status = tr(lang, "verified" if peer.verified else "unverified")
@@ -1008,14 +1042,21 @@ class MainWindow:
             ),
             font=theme.ui_font(lang, 14, "bold"),
         )
-        self._set_msg_placeholder(
-            bidi_text(tr(lang, "msg_placeholder_dm", nick=peer.nickname), rtl)
-        )
         self._verify_btn.grid()
         if peer.key_changed:
             self._key_warning_banner.grid()
         else:
             self._key_warning_banner.grid_remove()
+        if peer.blocked:
+            self._dm_blocked_banner.grid()
+            self._set_composer_enabled(
+                False, bidi_text(tr(lang, "msg_placeholder_dm_blocked"), rtl)
+            )
+        else:
+            self._dm_blocked_banner.grid_remove()
+            self._set_composer_enabled(
+                True, bidi_text(tr(lang, "msg_placeholder_dm", nick=peer.nickname), rtl)
+            )
 
     def _render_active_chat(self) -> None:
         self._status_labels.clear()
@@ -1139,6 +1180,10 @@ class MainWindow:
         self._render_active_chat()
 
     def _send_message(self) -> None:
+        if self._active_channel != "#public":
+            peer = self._peers.get(self._active_channel)
+            if peer is not None and peer.blocked:
+                return
         text = self._msg_entry.get().strip()
         if not text:
             return
