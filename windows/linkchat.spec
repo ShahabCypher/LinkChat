@@ -6,8 +6,12 @@ from PyInstaller.utils.hooks import collect_all, collect_data_files, collect_sub
 
 ROOT = Path(SPECPATH).resolve().parent
 ICON_PATH = ROOT / "windows" / "linkchat_win" / "assets" / "linkchat.ico"
+FONTS_DIR = ROOT / "windows" / "linkchat_win" / "assets" / "fonts"
 
-datas = [(str(ICON_PATH), "linkchat_win/assets")]
+datas = [
+    (str(ICON_PATH), "linkchat_win/assets"),
+    (str(FONTS_DIR), "linkchat_win/assets/fonts"),
+]
 binaries = []
 hiddenimports = [
     "_cffi_backend",
