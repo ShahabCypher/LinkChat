@@ -134,6 +134,15 @@ class OutboundDMQueue:
     def ack(self, msg_id: bytes) -> bool:
         return self._items.pop(msg_id, None) is not None
 
+    def cancel_for(self, target_id: bytes) -> int:
+        """Remove all queued outbound DMs addressed to target_id."""
+        to_remove = [
+            mid for mid, item in self._items.items() if item.target_id == target_id
+        ]
+        for mid in to_remove:
+            self._items.pop(mid, None)
+        return len(to_remove)
+
     def pending_for(self, target_id: bytes, now: float | None = None) -> list[QueuedDM]:
         ts = time.monotonic() if now is None else now
         self._prune(ts)

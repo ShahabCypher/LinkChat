@@ -28,6 +28,7 @@ class PeerInfo:
     key_changed: bool
     last_seen: float
     link_handle: str | None = None
+    blocked: bool = False
 
 
 @dataclass(frozen=True, slots=True)

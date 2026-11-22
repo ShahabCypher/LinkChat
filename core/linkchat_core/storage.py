@@ -58,8 +58,23 @@ class Storage:
                     x25519_pub BLOB NOT NULL,
                     verified INTEGER NOT NULL DEFAULT 0,
                     key_changed INTEGER NOT NULL DEFAULT 0,
+                    blocked INTEGER NOT NULL DEFAULT 0,
                     first_seen REAL NOT NULL,
                     last_seen REAL NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS block_windows (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    node_id_hex TEXT NOT NULL,
+                    blocked_at_ms INTEGER NOT NULL,
+                    unblocked_at_ms INTEGER
+                );
+                CREATE INDEX IF NOT EXISTS idx_block_windows_peer
+                    ON block_windows (node_id_hex, blocked_at_ms);
+                CREATE TABLE IF NOT EXISTS blocked_dm_drops (
+                    origin_id_hex TEXT NOT NULL,
+                    msg_id_hex TEXT NOT NULL,
+                    dropped_at_ms INTEGER NOT NULL,
+                    PRIMARY KEY (origin_id_hex, msg_id_hex)
                 );
                 CREATE TABLE IF NOT EXISTS messages (
                     msg_id TEXT PRIMARY KEY,
@@ -81,6 +96,14 @@ class Storage:
                 );
                 """
             )
+            cols = {
+                str(r["name"])
+                for r in self._conn.execute("PRAGMA table_info(peers)").fetchall()
+            }
+            if "blocked" not in cols:
+                self._conn.execute(
+                    "ALTER TABLE peers ADD COLUMN blocked INTEGER NOT NULL DEFAULT 0"
+                )
 
     def close(self) -> None:
         self._conn.close()
@@ -206,6 +229,71 @@ class Storage:
             )
         return cur.rowcount > 0
 
+    def is_peer_blocked(self, node_id_hex: str) -> bool:
+        row = self._conn.execute(
+            "SELECT blocked FROM peers WHERE node_id_hex = ?",
+            (node_id_hex,),
+        ).fetchone()
+        return bool(row["blocked"]) if row is not None else False
+
+    def set_peer_blocked(
+        self, node_id_hex: str, blocked: bool = True, now_ms: int | None = None
+    ) -> bool:
+        ts_ms = int(time.time() * 1000) if now_ms is None else now_ms
+        with self._conn:
+            cur = self._conn.execute(
+                "UPDATE peers SET blocked = ? WHERE node_id_hex = ?",
+                (1 if blocked else 0, node_id_hex),
+            )
+            if blocked:
+                open_row = self._conn.execute(
+                    "SELECT id FROM block_windows WHERE node_id_hex = ? AND unblocked_at_ms IS NULL LIMIT 1",
+                    (node_id_hex,),
+                ).fetchone()
+                if open_row is None:
+                    self._conn.execute(
+                        "INSERT INTO block_windows (node_id_hex, blocked_at_ms, unblocked_at_ms) VALUES (?, ?, NULL)",
+                        (node_id_hex, ts_ms),
+                    )
+            else:
+                self._conn.execute(
+                    "UPDATE block_windows SET unblocked_at_ms = ? WHERE node_id_hex = ? AND unblocked_at_ms IS NULL",
+                    (ts_ms, node_id_hex),
+                )
+        return cur.rowcount > 0
+
+    def record_blocked_dm_drop(
+        self, origin_id_hex: str, msg_id_hex: str, now_ms: int | None = None
+    ) -> None:
+        ts_ms = int(time.time() * 1000) if now_ms is None else now_ms
+        with self._conn:
+            self._conn.execute(
+                "INSERT OR IGNORE INTO blocked_dm_drops (origin_id_hex, msg_id_hex, dropped_at_ms) VALUES (?, ?, ?)",
+                (origin_id_hex, msg_id_hex, ts_ms),
+            )
+
+    def is_dm_msg_dropped(self, origin_id_hex: str, msg_id_hex: str) -> bool:
+        row = self._conn.execute(
+            "SELECT 1 FROM blocked_dm_drops WHERE origin_id_hex = ? AND msg_id_hex = ? LIMIT 1",
+            (origin_id_hex, msg_id_hex),
+        ).fetchone()
+        return row is not None
+
+    def is_timestamp_in_block_window(
+        self, node_id_hex: str, timestamp_ms: int
+    ) -> bool:
+        row = self._conn.execute(
+            """
+            SELECT 1 FROM block_windows
+            WHERE node_id_hex = ?
+              AND blocked_at_ms <= ?
+              AND (unblocked_at_ms IS NULL OR ? < unblocked_at_ms)
+            LIMIT 1
+            """,
+            (node_id_hex, timestamp_ms, timestamp_ms),
+        ).fetchone()
+        return row is not None
+
     def load_peers(self) -> list[PeerInfo]:
         rows = self._conn.execute("SELECT * FROM peers ORDER BY last_seen DESC").fetchall()
         return [
@@ -223,6 +311,7 @@ class Storage:
                 key_changed=bool(r["key_changed"]),
                 last_seen=float(r["last_seen"]),
                 link_handle=None,
+                blocked=bool(r["blocked"]),
             )
             for r in rows
         ]

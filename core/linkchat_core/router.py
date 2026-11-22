@@ -394,6 +394,11 @@ class MeshRouter:
                 direct = False
                 link_handle = None
 
+        blocked = (
+            existing.blocked
+            if existing is not None
+            else self.storage.is_peer_blocked(hdr.origin_id.hex())
+        )
         peer = PeerInfo(
             node_id=hdr.origin_id,
             node_id_hex=hdr.origin_id.hex(),
@@ -408,6 +413,7 @@ class MeshRouter:
             key_changed=key_changed,
             last_seen=now,
             link_handle=link_handle,
+            blocked=blocked,
         )
         self.peers[hdr.origin_id] = peer
         self._known_hellos[hdr.origin_id] = raw_packet
@@ -426,7 +432,8 @@ class MeshRouter:
             await self._share_known_hellos(from_handle, exclude_origin=hdr.origin_id)
             await self._send_sync_digest(from_handle)
 
-        await self._flush_outbound_dms(hdr.origin_id)
+        if not blocked:
+            await self._flush_outbound_dms(hdr.origin_id)
         self._schedule_forward(from_handle, pkt, raw_packet)
 
     async def _send_sync_digest(self, handle: str) -> None:
@@ -579,6 +586,18 @@ class MeshRouter:
         peer = self.peers.get(hdr.origin_id)
         if peer is None:
             return
+        if peer.blocked or self.storage.is_dm_msg_dropped(
+            peer.node_id_hex, hdr.msg_id.hex()
+        ):
+            self.storage.record_blocked_dm_drop(peer.node_id_hex, hdr.msg_id.hex())
+            await self._log(
+                "DROP",
+                f"Dropped DM from blocked peer {peer.nickname}",
+                pkt_type="CHAT_DM",
+                msg_id=hdr.msg_id.hex(),
+                origin_id=peer.node_id_hex,
+            )
+            return
         try:
             dm_key = derive_dm_key(
                 self.identity.x25519_priv,
@@ -600,6 +619,19 @@ class MeshRouter:
                 f"Failed DM decryption/auth from {peer.nickname}",
                 pkt_type="CHAT_DM",
                 msg_id=hdr.msg_id.hex(),
+            )
+            return
+
+        if self.storage.is_timestamp_in_block_window(
+            peer.node_id_hex, payload.timestamp_ms
+        ):
+            self.storage.record_blocked_dm_drop(peer.node_id_hex, hdr.msg_id.hex())
+            await self._log(
+                "DROP",
+                f"Dropped DM sent while {peer.nickname} was blocked",
+                pkt_type="CHAT_DM",
+                msg_id=hdr.msg_id.hex(),
+                origin_id=peer.node_id_hex,
             )
             return
 
@@ -667,6 +699,15 @@ class MeshRouter:
 
         peer = self.peers.get(hdr.origin_id)
         if peer is None:
+            return
+        if peer.blocked:
+            await self._log(
+                "DROP",
+                f"Dropped DM_ACK from blocked peer {peer.nickname}",
+                pkt_type="DM_ACK",
+                msg_id=payload.acked_msg_id.hex(),
+                origin_id=peer.node_id_hex,
+            )
             return
         try:
             dm_key = derive_dm_key(
@@ -862,11 +903,27 @@ class MeshRouter:
         self.storage.save_message(record)
         return record
 
+    def is_peer_blocked(self, node_id: bytes) -> bool:
+        peer = self.peers.get(node_id)
+        if peer is not None:
+            return peer.blocked
+        return self.storage.is_peer_blocked(node_id.hex())
+
+    def set_peer_blocked(self, node_id: bytes, blocked: bool = True) -> None:
+        self.storage.set_peer_blocked(node_id.hex(), blocked)
+        if blocked:
+            self.dm_queue.cancel_for(node_id)
+        peer = self.peers.get(node_id)
+        if peer is not None:
+            peer.blocked = blocked
+
     async def send_dm(self, target_id: bytes, text: str) -> MessageRecord:
         """Encrypt, persist, queue, and transmit a 1-to-1 DM."""
         peer = self.peers.get(target_id)
         if peer is None:
             raise ValueError(f"Unknown peer {target_id.hex()}: no X25519 key")
+        if peer.blocked:
+            raise ValueError(f"Peer {peer.node_id_hex} is blocked")
 
         ts_ms = int(time.time() * 1000)
         msg_id = os.urandom(8)

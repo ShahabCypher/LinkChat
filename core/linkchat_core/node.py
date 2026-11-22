@@ -134,6 +134,14 @@ class LinkChatNode:
             if verified:
                 peer.key_changed = False
 
+    def set_peer_blocked(self, node_id: bytes | str, blocked: bool = True) -> None:
+        raw_id = normalize_node_id(node_id)
+        self.router.set_peer_blocked(raw_id, blocked)
+
+    def is_peer_blocked(self, node_id: bytes | str) -> bool:
+        raw_id = normalize_node_id(node_id)
+        return self.router.is_peer_blocked(raw_id)
+
     def get_peers(self) -> list[PeerInfo]:
         return list(self.router.peers.values())
 
