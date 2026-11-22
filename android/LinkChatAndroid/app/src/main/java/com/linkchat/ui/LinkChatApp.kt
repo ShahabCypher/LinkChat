@@ -192,50 +192,51 @@ fun LinkChatApp(
                         )
                     }
 
-                    val pillColor = when {
-                        !hasBlePermissions -> LinkChatColors.WarningAmber
-                        !state.bleStatus.bluetoothEnabled -> LinkChatColors.DangerRed
-                        state.bleStatus.advertising && state.bleStatus.scanning -> LinkChatColors.VerifiedGreen
-                        state.bleStatus.serviceRunning -> LinkChatColors.AccentCyan
-                        else -> LinkChatColors.TextMuted
-                    }
-                    val pillLabel = when {
-                        !hasBlePermissions -> strings.blePermissions
-                        !state.bleStatus.bluetoothEnabled -> strings.bleBtOff
-                        state.bleStatus.advertising -> strings.bleDualRole
-                        state.bleStatus.scanning -> strings.bleCentral
-                        else -> strings.bleIdle
-                    }
-                    Surface(
-                        color = pillColor.copy(alpha = 0.16f),
-                        shape = RoundedCornerShape(10.dp),
-                        modifier = Modifier
-                            .padding(end = 4.dp)
-                            .clickable {
-                                if (!hasBlePermissions) {
-                                    onRequestPermissions()
-                                } else if (!state.bleStatus.serviceRunning) {
-                                    onStartMeshService()
-                                }
-                            },
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically,
+                    val showBleActionPill = !hasBlePermissions ||
+                        !state.bleStatus.bluetoothEnabled ||
+                        (!state.bleStatus.serviceRunning && state.bleStatus.statusKind != com.linkchat.model.BleStatusKind.RESETTING)
+                    if (showBleActionPill) {
+                        val pillColor = when {
+                            !hasBlePermissions -> LinkChatColors.WarningAmber
+                            !state.bleStatus.bluetoothEnabled -> LinkChatColors.DangerRed
+                            else -> LinkChatColors.TextMuted
+                        }
+                        val pillLabel = when {
+                            !hasBlePermissions -> strings.blePermissions
+                            !state.bleStatus.bluetoothEnabled -> strings.bleBtOff
+                            else -> strings.bleIdle
+                        }
+                        Surface(
+                            color = pillColor.copy(alpha = 0.16f),
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier
+                                .padding(end = 4.dp)
+                                .clickable {
+                                    if (!hasBlePermissions) {
+                                        onRequestPermissions()
+                                    } else if (!state.bleStatus.serviceRunning) {
+                                        onStartMeshService()
+                                    }
+                                },
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.Bluetooth,
-                                contentDescription = null,
-                                tint = pillColor,
-                                modifier = Modifier.size(14.dp),
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(
-                                text = pillLabel,
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.SemiBold,
-                                color = pillColor,
-                            )
+                            Row(
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Bluetooth,
+                                    contentDescription = null,
+                                    tint = pillColor,
+                                    modifier = Modifier.size(14.dp),
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = pillLabel,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = pillColor,
+                                )
+                            }
                         }
                     }
                     IconButton(onClick = { showResetDialog = true }) {

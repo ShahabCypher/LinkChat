@@ -216,7 +216,7 @@ class AndroidBleTransport(
 
             startPeripheral()
             startScanning()
-            statusNote = if (advertisingActive) "Dual-Role active" else "Central-Only active"
+            statusNote = "Mesh active"
             statusKind = if (advertisingActive) BleStatusKind.DUAL_ROLE else BleStatusKind.CENTRAL_ONLY
             statusErrorCode = null
             emitStatus()
@@ -238,7 +238,7 @@ class AndroidBleTransport(
             }
             startPeripheral()
             startScanning()
-            statusNote = if (advertisingActive) "Dual-Role active" else "Central-Only active"
+            statusNote = "Mesh active"
             statusKind = if (advertisingActive) BleStatusKind.DUAL_ROLE else BleStatusKind.CENTRAL_ONLY
             statusErrorCode = null
             emitStatus()
@@ -421,7 +421,7 @@ class AndroidBleTransport(
         val adapter = bluetoothAdapter ?: return
         val bleAdv = adapter.bluetoothLeAdvertiser
         if (bleAdv == null) {
-            Log.w(TAG, "BluetoothLeAdvertiser unavailable; Central-Only mode")
+            Log.w(TAG, "BluetoothLeAdvertiser unavailable; continuing with Central scanning")
             return
         }
         advertiser = bleAdv
@@ -458,7 +458,7 @@ class AndroidBleTransport(
         override fun onStartSuccess(settingsInEffect: AdvertiseSettings?) {
             opsHandler.post {
                 advertisingActive = true
-                statusNote = "Dual-Role active"
+                statusNote = "Mesh active"
                 statusKind = BleStatusKind.DUAL_ROLE
                 statusErrorCode = null
                 emitStatus()
@@ -469,7 +469,7 @@ class AndroidBleTransport(
             Log.w(TAG, "BLE advertising failed with code=$errorCode")
             opsHandler.post {
                 advertisingActive = false
-                statusNote = "Central-Only (adv err $errorCode)"
+                statusNote = "Mesh active (adv err $errorCode)"
                 statusKind = BleStatusKind.ADV_ERROR
                 statusErrorCode = errorCode
                 emitStatus()

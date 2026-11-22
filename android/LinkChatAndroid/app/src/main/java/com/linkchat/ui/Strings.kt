@@ -30,8 +30,6 @@ data class AppStrings(
     val tabInspector: String,
     val blePermissions: String,
     val bleBtOff: String,
-    val bleDualRole: String,
-    val bleCentral: String,
     val bleIdle: String,
     val blePermissionsBanner: String,
     val grant: String,
@@ -95,8 +93,6 @@ val PersianStrings = AppStrings(
     tabInspector = "تحلیلگر",
     blePermissions = "مجوزها",
     bleBtOff = "بلوتوث خاموش",
-    bleDualRole = "دوحالته",
-    bleCentral = "مرکزی",
     bleIdle = "آماده",
     blePermissionsBanner = "برای کشف و بازپخش همتایان مش به مجوزهای بلوتوث نیاز است.",
     grant = "اعطا",
@@ -151,9 +147,9 @@ val PersianStrings = AppStrings(
             BleStatusKind.IDLE -> "آماده"
             BleStatusKind.MISSING_PERMISSIONS -> "نیازمند مجوز بلوتوث"
             BleStatusKind.BLUETOOTH_OFF -> "بلوتوث خاموش است"
-            BleStatusKind.DUAL_ROLE -> "حالت دوگانه فعال"
-            BleStatusKind.CENTRAL_ONLY -> "فقط مرکزی فعال"
-            BleStatusKind.ADV_ERROR -> "فقط مرکزی (خطای تبلیغ ${status.errorCode ?: 0})"
+            BleStatusKind.DUAL_ROLE,
+            BleStatusKind.CENTRAL_ONLY -> "شبکه مش فعال"
+            BleStatusKind.ADV_ERROR -> "شبکه مش فعال (خطای تبلیغ ${status.errorCode ?: 0})"
             BleStatusKind.RESETTING -> "در حال بازنشانی..."
             BleStatusKind.STOPPED -> "متوقف"
         }
@@ -171,8 +167,6 @@ val EnglishStrings = AppStrings(
     tabInspector = "Inspector",
     blePermissions = "Permissions",
     bleBtOff = "BT Off",
-    bleDualRole = "Dual-Role",
-    bleCentral = "Central",
     bleIdle = "Idle",
     blePermissionsBanner = "Bluetooth permissions are needed to discover & relay mesh peers.",
     grant = "Grant",
@@ -227,9 +221,9 @@ val EnglishStrings = AppStrings(
             BleStatusKind.IDLE -> "Idle"
             BleStatusKind.MISSING_PERMISSIONS -> "Missing BLE permissions"
             BleStatusKind.BLUETOOTH_OFF -> "Bluetooth is off"
-            BleStatusKind.DUAL_ROLE -> "Dual-Role active"
-            BleStatusKind.CENTRAL_ONLY -> "Central-Only active"
-            BleStatusKind.ADV_ERROR -> "Central-Only (adv err ${status.errorCode ?: 0})"
+            BleStatusKind.DUAL_ROLE,
+            BleStatusKind.CENTRAL_ONLY -> "Mesh active"
+            BleStatusKind.ADV_ERROR -> "Mesh active (adv err ${status.errorCode ?: 0})"
             BleStatusKind.RESETTING -> "Resetting..."
             BleStatusKind.STOPPED -> "Stopped"
         }
