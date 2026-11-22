@@ -2,5 +2,5 @@
 <resources>
     <string name="app_name">لینک‌چت</string>
     <string name="notification_channel_name">سرویس شبکه لینک‌چت</string>
-    <string name="notification_channel_desc">کشف همتایان بلوتوث و پیام‌رسانی توری را فعال نگه می‌دارد</string>
+    <string name="notification_channel_desc">کشف همتایان بلوتوث و پیام‌رسانی مش را فعال نگه می‌دارد</string>
 </resources>

@@ -15,7 +15,7 @@ _PDF = "\u202C"
 
 STRINGS: dict[Lang, dict[str, str]] = {
     "fa": {
-        "window_title": "لینک‌چت — پیام‌رسان توری آفلاین بلوتوث",
+        "window_title": "لینک‌چت — پیام‌رسان مش آفلاین بلوتوث",
         "app_name": "لینک‌چت",
         "id_prefix": "ID:",
         "mode_starting": "در حال راه‌اندازی...",
@@ -48,7 +48,7 @@ STRINGS: dict[Lang, dict[str, str]] = {
         "hop_direct": "مستقیم",
         "hop_n": "{n} جهش",
         "rssi_disconnected": "قطع",
-        "rssi_relay": "از طریق رله توری",
+        "rssi_relay": "از طریق رله مش",
         "dm_delivered": "تحویل شد ✓",
         "dm_relayed": "بازپخش شد",
         "dm_sending": "در حال ارسال...",
