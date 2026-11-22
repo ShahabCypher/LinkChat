@@ -675,3 +675,122 @@ async def test_windows_ble_transport_prunes_dead_links_and_disconnect_link() -> 
         assert "ble-p:dev-2" not in transport._peripheral_links
     finally:
         await transport.stop()
+
+
+def test_windows_peer_radar_skips_redraw_on_heartbeat_and_updates_in_place() -> None:
+    from dataclasses import replace
+    from linkchat_core import PeerInfo
+    from linkchat_win.ui.main_window import MainWindow
+
+    class _FakeWidget:
+        def __init__(self) -> None:
+            self.configured: dict[str, Any] = {}
+            self.destroyed = False
+            self.grid_visible = True
+
+        def configure(self, **kwargs: Any) -> None:
+            self.configured.update(kwargs)
+
+        def winfo_exists(self) -> bool:
+            return not self.destroyed
+
+        def destroy(self) -> None:
+            self.destroyed = True
+
+        def grid(self, **_kwargs: Any) -> None:
+            self.grid_visible = True
+
+        def grid_remove(self) -> None:
+            self.grid_visible = False
+
+    class _FakeContainer:
+        def __init__(self) -> None:
+            self.children: list[_FakeWidget] = []
+
+        def winfo_children(self) -> list[_FakeWidget]:
+            return [c for c in self.children if not c.destroyed]
+
+    win = MainWindow.__new__(MainWindow)
+    win._lang = "en"
+    win._own_node_id = "0000111122223333"
+    win._active_channel = "#public"
+    win._peers = {}
+    win._peer_cards = {}
+    win._rendered_peer_order = []
+    win._empty_radar_label = None
+    win._unread_counts = {}
+    win._radar_title = _FakeWidget()  # type: ignore[assignment]
+    win._connecting_badge = _FakeWidget()  # type: ignore[assignment]
+    win._public_btn = _FakeWidget()  # type: ignore[assignment]
+    win._peer_list_frame = _FakeContainer()  # type: ignore[assignment]
+
+    render_calls = 0
+    clear_calls = 0
+
+    def _fake_render(_idx: int, peer: PeerInfo) -> dict[str, Any]:
+        nonlocal render_calls
+        render_calls += 1
+        card = _FakeWidget()
+        win._peer_list_frame.children.append(card)  # type: ignore[attr-defined]
+        widgets = {
+            "card": card,
+            "name_lbl": _FakeWidget(),
+            "trust_lbl": _FakeWidget(),
+            "hop_lbl": _FakeWidget(),
+            "rssi_lbl": _FakeWidget(),
+        }
+        win._update_peer_card(widgets, peer)
+        return widgets
+
+    orig_clear = MainWindow._clear_peer_radar_widgets.__get__(win, MainWindow)
+
+    def _tracked_clear() -> None:
+        nonlocal clear_calls
+        clear_calls += 1
+        orig_clear()
+
+    win._render_peer_card = _fake_render  # type: ignore[method-assign]
+    win._clear_peer_radar_widgets = _tracked_clear  # type: ignore[method-assign]
+
+    peer1 = PeerInfo(
+        node_id=b"\xaa" * 8,
+        node_id_hex="aa" * 8,
+        nickname="Phone",
+        ed25519_pub=b"\x01" * 32,
+        x25519_pub=b"\x02" * 32,
+        hop_count=1,
+        rssi=-55,
+        direct=True,
+        connected=True,
+        verified=False,
+        key_changed=False,
+        last_seen=100.0,
+        link_handle="ble-c:11",
+    )
+
+    # First discovery creates the card once.
+    win._on_peer_updated(peer1)
+    assert render_calls == 1
+    assert clear_calls == 1
+    card_obj = win._peer_cards[peer1.node_id_hex]["card"]
+
+    # Heartbeat refresh only bumps last_seen -> no redraw, no card destruction.
+    win._on_peer_updated(replace(peer1, last_seen=105.0))
+    win._on_peer_updated(replace(peer1, last_seen=110.0))
+    assert render_calls == 1
+    assert clear_calls == 1
+    assert card_obj.destroyed is False
+
+    # RSSI change updates the existing card in place without destroying/rebuilding it.
+    win._on_peer_updated(replace(peer1, last_seen=115.0, rssi=-64))
+    assert render_calls == 1
+    assert clear_calls == 1
+    assert card_obj.destroyed is False
+    assert "-64" in win._peer_cards[peer1.node_id_hex]["rssi_lbl"].configured["text"]
+
+    # Going offline updates in place when order doesn't change, keeping card intact.
+    win._on_peer_updated(replace(peer1, connected=False, direct=False, link_handle=None))
+    assert render_calls == 1
+    assert clear_calls == 1
+    assert card_obj.destroyed is False
+    assert win._peer_cards[peer1.node_id_hex]["hop_lbl"].configured["text"] == "Offline"

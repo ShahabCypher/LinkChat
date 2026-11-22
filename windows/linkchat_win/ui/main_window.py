@@ -58,6 +58,9 @@ class MainWindow:
         self._active_channel = "#public"
         self._inspector_visible = False
         self._peers: dict[str, PeerInfo] = {}
+        self._peer_cards: dict[str, dict[str, Any]] = {}
+        self._rendered_peer_order: list[str] = []
+        self._empty_radar_label: ctk.CTkLabel | None = None
         self._messages: dict[str, list[MessageRecord]] = {"#public": []}
         self._seen_msg_ids: dict[str, set[str]] = {"#public": set()}
         self._unread_counts: dict[str, int] = {}
@@ -502,6 +505,9 @@ class MainWindow:
         self.root.title(tr(new_lang, "window_title"))
 
         self._status_labels.clear()
+        self._peer_cards.clear()
+        self._rendered_peer_order.clear()
+        self._empty_radar_label = None
         for child in self.root.winfo_children():
             child.destroy()
 
@@ -626,8 +632,23 @@ class MainWindow:
             fg_color=self._mode_badge_color(),
         )
 
+    @staticmethod
+    def _peer_visual_key(peer: PeerInfo) -> tuple[Any, ...]:
+        return (
+            peer.nickname,
+            peer.hop_count,
+            peer.rssi,
+            peer.direct,
+            peer.connected,
+            peer.verified,
+            peer.key_changed,
+        )
+
     def _on_peer_updated(self, peer: PeerInfo) -> None:
+        prev = self._peers.get(peer.node_id_hex)
         self._peers[peer.node_id_hex] = peer
+        if prev is not None and self._peer_visual_key(prev) == self._peer_visual_key(peer):
+            return
         self._refresh_peer_radar()
         if self._active_channel == peer.node_id_hex:
             self._update_channel_header()
@@ -730,16 +751,15 @@ class MainWindow:
         lang = self._lang
         rtl = self._is_rtl
 
-        for child in self._peer_list_frame.winfo_children():
-            child.destroy()
-
         peers = sorted(
             self._peers.values(),
             key=lambda p: (
                 not p.connected,
                 not p.direct,
                 p.hop_count,
-                -p.last_seen,
+                0.0 if p.connected else -p.last_seen,
+                p.nickname.lower(),
+                p.node_id_hex,
             ),
         )
         online = sum(1 for p in peers if p.connected)
@@ -766,44 +786,59 @@ class MainWindow:
         )
 
         if not peers:
-            ctk.CTkLabel(
+            if self._empty_radar_label is not None and self._empty_radar_label.winfo_exists():
+                return
+            self._clear_peer_radar_widgets()
+            self._empty_radar_label = ctk.CTkLabel(
                 self._peer_list_frame,
                 text=tr(lang, "scanning_peers"),
                 font=theme.ui_font(lang, 12),
                 text_color=theme.TEXT_DIM,
-            ).grid(row=0, column=0, pady=18)
+            )
+            self._empty_radar_label.grid(row=0, column=0, pady=18)
             return
 
-        for idx, peer in enumerate(peers):
-            self._render_peer_card(idx, peer)
+        desired_order = [p.node_id_hex for p in peers]
+        if desired_order == self._rendered_peer_order and all(
+            (card := self._peer_cards.get(pid)) is not None and card["card"].winfo_exists()
+            for pid in desired_order
+        ):
+            for peer in peers:
+                self._update_peer_card(self._peer_cards[peer.node_id_hex], peer)
+            return
 
-    def _render_peer_card(self, row_idx: int, peer: PeerInfo) -> None:
+        self._clear_peer_radar_widgets()
+        for idx, peer in enumerate(peers):
+            self._peer_cards[peer.node_id_hex] = self._render_peer_card(idx, peer)
+        self._rendered_peer_order = desired_order
+
+    def _clear_peer_radar_widgets(self) -> None:
+        self._peer_cards.clear()
+        self._rendered_peer_order.clear()
+        self._empty_radar_label = None
+        for child in self._peer_list_frame.winfo_children():
+            child.destroy()
+
+    def _render_peer_card(self, row_idx: int, peer: PeerInfo) -> dict[str, Any]:
         lang = self._lang
         rtl = self._is_rtl
-        is_selected = self._active_channel == peer.node_id_hex
-        card_bg = theme.BG_CARD_ACTIVE if is_selected else theme.BG_CARD
         card = ctk.CTkFrame(
             self._peer_list_frame,
-            fg_color=card_bg,
+            fg_color=theme.BG_CARD,
             corner_radius=8,
             border_width=1,
-            border_color=theme.ACCENT_BLUE if is_selected else theme.BORDER_SUBTLE,
+            border_color=theme.BORDER_SUBTLE,
         )
         card.grid(row=row_idx, column=0, sticky="ew", pady=(0, 6))
         card.grid_columnconfigure(0, weight=1)
-
-        trust_icon, trust_color = self._trust_badge(peer)
-        unread = self._unread_counts.get(peer.node_id_hex, 0)
-        unread_text = f" [{unread}]" if unread else ""
 
         top = ctk.CTkFrame(card, fg_color="transparent")
         top.grid(row=0, column=0, sticky="ew", padx=10, pady=(8, 2))
         top.grid_columnconfigure(1 if rtl else 0, weight=1)
 
-        name_text = f"{peer.nickname} ({peer.node_id_hex[:4]}){unread_text}"
         name_lbl = ctk.CTkLabel(
             top,
-            text=bidi_text(name_text, rtl),
+            text="",
             font=theme.message_font(peer.nickname, lang, 12, "bold"),
             text_color=theme.TEXT_PRIMARY,
             anchor="e" if rtl else "w",
@@ -816,9 +851,9 @@ class MainWindow:
 
         trust_lbl = ctk.CTkLabel(
             top,
-            text=trust_icon,
+            text="",
             font=theme.ui_font(lang, 12, "bold"),
-            text_color=trust_color,
+            text_color=theme.TEXT_DIM,
         )
         trust_lbl.grid(
             row=0,
@@ -830,12 +865,11 @@ class MainWindow:
         bottom.grid(row=1, column=0, sticky="ew", padx=10, pady=(0, 8))
         bottom.grid_columnconfigure(0 if rtl else 1, weight=1)
 
-        hop_text, hop_color = theme.format_hop_badge(peer, lang)
         hop_lbl = ctk.CTkLabel(
             bottom,
-            text=hop_text,
+            text="",
             font=theme.ui_font(lang, 10, "bold"),
-            text_color=hop_color,
+            text_color=theme.TEXT_MUTED,
         )
         hop_lbl.grid(
             row=0,
@@ -845,7 +879,7 @@ class MainWindow:
 
         rssi_lbl = ctk.CTkLabel(
             bottom,
-            text=theme.format_rssi(peer.rssi, peer.direct, peer.connected, lang),
+            text="",
             font=theme.ui_font(lang, 10),
             text_color=theme.TEXT_MUTED,
         )
@@ -860,6 +894,42 @@ class MainWindow:
                 "<Button-1>",
                 lambda _e, pid=peer.node_id_hex: self._select_channel(pid),
             )
+
+        widgets = {
+            "card": card,
+            "name_lbl": name_lbl,
+            "trust_lbl": trust_lbl,
+            "hop_lbl": hop_lbl,
+            "rssi_lbl": rssi_lbl,
+        }
+        self._update_peer_card(widgets, peer)
+        return widgets
+
+    def _update_peer_card(self, widgets: dict[str, Any], peer: PeerInfo) -> None:
+        lang = self._lang
+        rtl = self._is_rtl
+        is_selected = self._active_channel == peer.node_id_hex
+        card_bg = theme.BG_CARD_ACTIVE if is_selected else theme.BG_CARD
+        border_color = theme.ACCENT_BLUE if is_selected else theme.BORDER_SUBTLE
+        widgets["card"].configure(fg_color=card_bg, border_color=border_color)
+
+        unread = self._unread_counts.get(peer.node_id_hex, 0)
+        unread_text = f" [{unread}]" if unread else ""
+        name_text = f"{peer.nickname} ({peer.node_id_hex[:4]}){unread_text}"
+        widgets["name_lbl"].configure(
+            text=bidi_text(name_text, rtl),
+            font=theme.message_font(peer.nickname, lang, 12, "bold"),
+        )
+
+        trust_icon, trust_color = self._trust_badge(peer)
+        widgets["trust_lbl"].configure(text=trust_icon, text_color=trust_color)
+
+        hop_text, hop_color = theme.format_hop_badge(peer, lang)
+        widgets["hop_lbl"].configure(text=hop_text, text_color=hop_color)
+
+        widgets["rssi_lbl"].configure(
+            text=theme.format_rssi(peer.rssi, peer.direct, peer.connected, lang)
+        )
 
     @staticmethod
     def _trust_badge(peer: PeerInfo) -> tuple[str, str]:
