@@ -17,7 +17,6 @@ from ..i18n import (
     contains_persian,
     is_rtl_text,
     tr,
-    translate_mode_label,
 )
 from . import theme
 from .verify_dialog import VerifyDialog
@@ -52,8 +51,6 @@ class MainWindow:
         self._own_node_id = ""
         self._short_tag = ""
         self._nickname = ""
-        self._central_only = False
-        self._raw_mode_label = ""
         self._resetting = False
         self._active_channel = "#public"
         self._inspector_visible = False
@@ -111,8 +108,8 @@ class MainWindow:
         )
         bar.grid(row=0, column=0, columnspan=3, sticky="ew")
 
-        spacer_col = 4 if rtl else 3
-        for col in range(8):
+        spacer_col = 4 if rtl else 2
+        for col in range(7):
             bar.grid_columnconfigure(col, weight=1 if col == spacer_col else 0)
 
         brand_lbl = ctk.CTkLabel(
@@ -123,7 +120,7 @@ class MainWindow:
         )
         brand_lbl.grid(
             row=0,
-            column=7 if rtl else 0,
+            column=6 if rtl else 0,
             padx=(12, 16) if rtl else (16, 12),
             pady=12,
         )
@@ -136,25 +133,8 @@ class MainWindow:
         )
         self._id_label.grid(
             row=0,
-            column=6 if rtl else 1,
+            column=5 if rtl else 1,
             padx=(12, 0) if rtl else (0, 12),
-        )
-
-        mode_text = self._format_mode_text()
-        self._mode_badge = ctk.CTkLabel(
-            bar,
-            text=bidi_text(mode_text, is_rtl_text(mode_text, rtl)),
-            font=theme.ui_font(lang, 11, "bold"),
-            text_color="#0B1117",
-            fg_color=self._mode_badge_color(),
-            corner_radius=8,
-            padx=10,
-            pady=3,
-        )
-        self._mode_badge.grid(
-            row=0,
-            column=5 if rtl else 2,
-            padx=(8, 0) if rtl else (0, 8),
         )
 
         self._connecting_badge = ctk.CTkLabel(
@@ -178,7 +158,7 @@ class MainWindow:
         nick_wrap = ctk.CTkFrame(bar, fg_color="transparent")
         nick_wrap.grid(
             row=0,
-            column=3 if rtl else 4,
+            column=3,
             padx=(12, 0) if rtl else (0, 12),
         )
 
@@ -230,7 +210,7 @@ class MainWindow:
         )
         self._lang_btn.grid(
             row=0,
-            column=2 if rtl else 5,
+            column=2 if rtl else 4,
             padx=(8, 0) if rtl else (0, 8),
         )
 
@@ -245,7 +225,7 @@ class MainWindow:
         )
         self._inspector_btn.grid(
             row=0,
-            column=1 if rtl else 6,
+            column=1 if rtl else 5,
             padx=(8, 0) if rtl else (0, 8),
         )
 
@@ -264,7 +244,7 @@ class MainWindow:
         )
         self._reset_btn.grid(
             row=0,
-            column=0 if rtl else 7,
+            column=0 if rtl else 6,
             padx=(16, 0) if rtl else (0, 16),
         )
 
@@ -552,7 +532,6 @@ class MainWindow:
             FingerprintReadyEvent,
             HistoryLoadedEvent,
             MeshLogEvent,
-            ModeChangedEvent,
             NodeReadyEvent,
             NodeResetEvent,
             PeerUpdatedEvent,
@@ -566,8 +545,6 @@ class MainWindow:
                     self._on_node_ready(ev)
                 elif isinstance(ev, NodeResetEvent):
                     self._on_node_reset(ev)
-                elif isinstance(ev, ModeChangedEvent):
-                    self._update_mode_badge(ev.central_only, ev.mode_label)
                 elif isinstance(ev, PeerUpdatedEvent):
                     self._on_peer_updated(ev.peer)
                 elif isinstance(ev, PublicMessageEvent):
@@ -600,16 +577,6 @@ class MainWindow:
             return f"{prefix} ----"
         return f"{prefix} {self._short_tag} ({self._own_node_id[:8]}…)"
 
-    def _format_mode_text(self) -> str:
-        if not self._own_node_id and not self._raw_mode_label:
-            return tr(self._lang, "mode_starting")
-        return translate_mode_label(self._lang, self._central_only, self._raw_mode_label)
-
-    def _mode_badge_color(self) -> str:
-        if not self._own_node_id and not self._raw_mode_label:
-            return theme.TEXT_MUTED
-        return theme.STATUS_AMBER if self._central_only else theme.STATUS_GREEN
-
     def _on_node_ready(self, ev: Any) -> None:
         self._own_node_id = ev.node_id_hex
         self._short_tag = ev.short_tag
@@ -617,7 +584,6 @@ class MainWindow:
         self._id_label.configure(text=self._format_id_text())
         self._nick_entry.delete(0, "end")
         self._nick_entry.insert(0, ev.nickname)
-        self._update_mode_badge(ev.central_only, ev.mode_label)
 
         for peer in ev.initial_peers:
             self._peers[peer.node_id_hex] = peer
@@ -628,15 +594,6 @@ class MainWindow:
         self._seen_msg_ids["#public"] = {m.msg_id for m in ev.public_history}
         if self._active_channel == "#public":
             self._render_active_chat()
-
-    def _update_mode_badge(self, central_only: bool, label: str) -> None:
-        self._central_only = central_only
-        self._raw_mode_label = label
-        mode_text = self._format_mode_text()
-        self._mode_badge.configure(
-            text=bidi_text(mode_text, is_rtl_text(mode_text, self._is_rtl)),
-            fg_color=self._mode_badge_color(),
-        )
 
     @staticmethod
     def _peer_visual_key(peer: PeerInfo) -> tuple[Any, ...]:
@@ -748,7 +705,6 @@ class MainWindow:
         self._nick_entry.delete(0, "end")
         self._nick_entry.insert(0, ev.nickname)
         self._msg_entry.delete(0, "end")
-        self._update_mode_badge(ev.central_only, ev.mode_label)
         self._refresh_peer_radar()
         self._update_channel_header()
         self._render_active_chat()

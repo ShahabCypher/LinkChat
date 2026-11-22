@@ -19,9 +19,6 @@ STRINGS: dict[Lang, dict[str, str]] = {
         "window_title": "لینک‌چت — پیام‌رسان مش آفلاین بلوتوث",
         "app_name": "لینک‌چت",
         "id_prefix": "ID:",
-        "mode_starting": "در حال راه‌اندازی...",
-        "mode_dual_role": "دوحالته",
-        "mode_central_only": "فقط مرکزی",
         "connecting": "در حال اتصال...",
         "nickname_label": "نام:",
         "save": "ذخیره",
@@ -78,9 +75,6 @@ STRINGS: dict[Lang, dict[str, str]] = {
         "window_title": "LinkChat — Offline BLE Mesh Messenger",
         "app_name": "LinkChat",
         "id_prefix": "ID:",
-        "mode_starting": "Starting...",
-        "mode_dual_role": "Dual-Role",
-        "mode_central_only": "Central-Only",
         "connecting": "Connecting...",
         "nickname_label": "Nickname:",
         "save": "Save",
@@ -148,15 +142,6 @@ def tr(lang: Lang, key: str, **kwargs: object) -> str:
     """Look up a localized string for lang and optionally format placeholders."""
     template = STRINGS[lang][key]
     return template.format(**kwargs) if kwargs else template
-
-
-def translate_mode_label(lang: Lang, central_only: bool, raw_label: str = "") -> str:
-    """Localize transport mode labels while preserving unknown custom strings."""
-    if central_only or raw_label == "Central-Only":
-        return tr(lang, "mode_central_only")
-    if raw_label in ("", "Dual-Role"):
-        return tr(lang, "mode_dual_role")
-    return raw_label
 
 
 def is_persian_char(ch: str) -> bool:
