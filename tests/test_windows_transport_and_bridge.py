@@ -583,3 +583,95 @@ def test_apply_window_icon_uses_bundled_ico() -> None:
     ico_path = Path(win.called_with)
     assert ico_path.is_file()
     assert ico_path.read_bytes()[:4] == b"\x00\x00\x01\x00"
+
+
+async def test_windows_ble_transport_prunes_dead_links_and_disconnect_link() -> None:
+    scanners: list[_FakeScanner] = []
+    clients: list[_FakeClient] = []
+
+    class _FlagClient(_FakeClient):
+        def __init__(self, device: _FakeDevice, disconnected_callback: Any = None) -> None:
+            super().__init__(device, disconnected_callback=disconnected_callback)
+            self.is_connected = True
+
+        async def disconnect(self) -> None:
+            self.is_connected = False
+            await super().disconnect()
+
+    transport = WindowsBleTransport(
+        "abcd111122223333",
+        force_central_only=True,
+        scanner_factory=lambda **kw: scanners.append(_FakeScanner(**kw)) or scanners[-1],
+        client_factory=lambda dev, **kw: clients.append(_FlagClient(dev, **kw)) or clients[-1],
+    )
+    down_events: list[str] = []
+
+    async def noop_up(_h: str, _m: int, _r: int) -> None:
+        pass
+
+    async def on_down(h: str) -> None:
+        down_events.append(h)
+
+    async def noop_chunk(_h: str, _d: bytes) -> None:
+        pass
+
+    transport.set_callbacks(noop_up, on_down, noop_chunk)
+    await transport.start()
+    try:
+        await asyncio.sleep(0.05)
+        dev = _FakeDevice(address="AA:11:22:33:44:99", name="LC-0009")
+        adv = _FakeAdv(local_name="LC-0009", service_uuids=[SERVICE_UUID], rssi=-60)
+        scanners[0].detection_callback(dev, adv)
+        await asyncio.sleep(0.05)
+
+        c_handle = "ble-c:AA:11:22:33:44:99"
+        assert c_handle in transport._central_links
+
+        # Drop central link via _prune_dead_links without disconnected_callback firing
+        clients[0].is_connected = False
+        await transport._prune_dead_links()
+        assert c_handle in down_events
+        assert c_handle not in transport._central_links
+
+        # Drop WinRT peripheral link when no longer in subscribed_clients, and close session via disconnect_link
+        from linkchat_win.ble_transport import _PeripheralLink
+
+        class _FakeSession:
+            def __init__(self, dev_id: str) -> None:
+                self.device_id = type("DevId", (), {"id": dev_id})()
+                self.closed = False
+
+            def close(self) -> None:
+                self.closed = True
+
+        class _FakeSub:
+            def __init__(self, dev_id: str) -> None:
+                self.session = _FakeSession(dev_id)
+
+        class _FakeTxChar:
+            def __init__(self) -> None:
+                self.subscribed_clients: list[Any] = []
+
+        sub1 = _FakeSub("dev-1")
+        sub2 = _FakeSub("dev-2")
+        tx_char = _FakeTxChar()
+        tx_char.subscribed_clients = [sub2]
+        transport._winrt_tx_char = tx_char
+        transport._peripheral_links["ble-p:dev-1"] = _PeripheralLink(
+            handle="ble-p:dev-1", device_id="dev-1", mtu=247, subscribed_client=sub1
+        )
+        transport._peripheral_links["ble-p:dev-2"] = _PeripheralLink(
+            handle="ble-p:dev-2", device_id="dev-2", mtu=247, subscribed_client=sub2
+        )
+
+        await transport._prune_dead_links()
+        assert "ble-p:dev-1" in down_events
+        assert "ble-p:dev-1" not in transport._peripheral_links
+        assert "ble-p:dev-2" in transport._peripheral_links
+
+        await transport.disconnect_link("ble-p:dev-2")
+        assert sub2.session.closed is True
+        assert "ble-p:dev-2" in down_events
+        assert "ble-p:dev-2" not in transport._peripheral_links
+    finally:
+        await transport.stop()

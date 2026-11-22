@@ -229,6 +229,36 @@ class WindowsBleTransport:
         with contextlib.suppress(Exception):
             await link.client.disconnect()
 
+    async def disconnect_link(self, handle: str) -> None:
+        """Tear down a stale central or peripheral link requested by the router."""
+        c_link = self._central_links.get(handle)
+        if c_link is not None:
+            await self._drop_central_link(handle, c_link)
+            return
+        p_link = self._peripheral_links.get(handle)
+        if p_link is not None:
+            if p_link.subscribed_client is not None:
+                with contextlib.suppress(Exception):
+                    p_link.subscribed_client.session.close()
+            await self._handle_peripheral_disconnect(handle)
+
+    async def _prune_dead_links(self) -> None:
+        for handle, link in list(self._central_links.items()):
+            if not getattr(link.client, "is_connected", True):
+                await self._drop_central_link(handle, link)
+
+        if self._winrt_tx_char is not None and self._peripheral_links:
+            try:
+                clients = list(self._winrt_tx_char.subscribed_clients)
+            except Exception:
+                return
+            active_handles = {
+                f"ble-p:{sub.session.device_id.id}" for sub in clients
+            }
+            for handle, p_link in list(self._peripheral_links.items()):
+                if p_link.subscribed_client is not None and handle not in active_handles:
+                    await self._handle_peripheral_disconnect(handle)
+
     async def _handle_peripheral_disconnect(self, handle: str) -> None:
         link = self._peripheral_links.pop(handle, None)
         if link is None:
@@ -290,6 +320,7 @@ class WindowsBleTransport:
                 logger.info("BLE Central scanner started (%s)", self.mode_label)
                 while self._started:
                     await asyncio.sleep(1.0)
+                    await self._prune_dead_links()
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
@@ -652,6 +683,10 @@ class WindowsBleTransport:
 
     async def _stop_peripheral(self) -> None:
         for handle in list(self._peripheral_links):
+            link = self._peripheral_links.get(handle)
+            if link is not None and link.subscribed_client is not None:
+                with contextlib.suppress(Exception):
+                    link.subscribed_client.session.close()
             await self._handle_peripheral_disconnect(handle)
 
         for obj, remover_name, token in self._winrt_tokens:
