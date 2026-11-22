@@ -222,10 +222,6 @@ private fun PeerCard(
                     if (peer.keyChanged) {
                         Pill(text = strings.keyChangedPill, color = LinkChatColors.DangerRed)
                     }
-
-                    if (isBlocked) {
-                        Pill(text = strings.blockedPill, color = LinkChatColors.WarningAmber)
-                    }
                 }
             }
 
