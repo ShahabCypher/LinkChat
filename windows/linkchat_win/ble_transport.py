@@ -81,23 +81,19 @@ class _PeripheralLink:
 
 
 class WindowsBleTransport:
-    """Dual-role Windows BLE transport with automatic Central-only fallback."""
+    """Dual-role Windows BLE transport with silent Central fallback if Peripheral init fails."""
 
     def __init__(
         self,
         node_id_hex: str = "",
         *,
-        force_central_only: bool = False,
-        on_mode_changed: Callable[[bool], None] | None = None,
         scan_retry_sec: float = SCAN_RETRY_SEC,
         connect_cooldown_sec: float = CONNECT_COOLDOWN_SEC,
         scanner_factory: Callable[..., Any] | None = None,
         client_factory: Callable[..., Any] | None = None,
     ) -> None:
         self._node_id_hex = node_id_hex.lower()
-        self._force_central_only = force_central_only
-        self.central_only = force_central_only
-        self.on_mode_changed = on_mode_changed
+        self._peripheral_active = False
         self._scan_retry_sec = scan_retry_sec
         self._connect_cooldown_sec = connect_cooldown_sec
         self._scanner_factory = scanner_factory or BleakScanner
@@ -133,10 +129,6 @@ class WindowsBleTransport:
     @property
     def local_name(self) -> str:
         return f"LC-{self.local_tag}"
-
-    @property
-    def mode_label(self) -> str:
-        return "Central-Only" if self.central_only else "Dual-Role"
 
     def set_node_id(self, node_id_hex: str) -> None:
         self._node_id_hex = node_id_hex.lower()

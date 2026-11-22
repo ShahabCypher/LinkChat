@@ -114,7 +114,9 @@ fun LinkChatApp(
                         Column {
                             Text(
                                 text = styledBidiText(dmPeer.nickname),
-                                style = MaterialTheme.typography.titleMedium,
+                                style = MaterialTheme.typography.titleMedium.copy(
+                                    textDirection = textDirectionFor(dmPeer.nickname, defaultRtl = isRtl),
+                                ),
                                 fontWeight = FontWeight.Bold,
                             )
                             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -156,7 +158,9 @@ fun LinkChatApp(
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text(
                                     text = styledBidiText(state.nickname),
-                                    style = MaterialTheme.typography.labelMedium,
+                                    style = MaterialTheme.typography.labelMedium.copy(
+                                        textDirection = textDirectionFor(state.nickname, defaultRtl = isRtl),
+                                    ),
                                     color = LinkChatColors.TextPrimary,
                                 )
                                 Spacer(modifier = Modifier.width(4.dp))
