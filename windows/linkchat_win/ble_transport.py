@@ -8,7 +8,7 @@ import logging
 import time
 import uuid
 from dataclasses import dataclass
-from typing import Any, Awaitable, Callable
+from typing import Any, Awaitable, Callable, Iterable
 
 from bleak import BleakClient, BleakScanner
 from bleak.backends.device import BLEDevice
@@ -33,6 +33,13 @@ def parse_linkchat_tag(local_name: str | None) -> str | None:
     if all(ch in "0123456789abcdef" for ch in tag):
         return tag
     return None
+
+
+def is_peer_blocked(known_tag: str | None, blocked_tags: set[str]) -> bool:
+    """Return True when ``known_tag`` matches an active 4-hex blocked tag."""
+    if not known_tag or not blocked_tags:
+        return False
+    return known_tag.strip().lower() in blocked_tags
 
 
 def _extract_service_data_label(adv: AdvertisementData) -> str | None:
@@ -108,6 +115,9 @@ class WindowsBleTransport:
         self._last_attempt: dict[str, float] = {}
         self._central_links: dict[str, _CentralLink] = {}
         self._central_by_addr: dict[str, str] = {}
+        self._blocked_tags: set[str] = set()
+        self._tag_by_addr: dict[str, str] = {}
+        self._tag_by_handle: dict[str, str] = {}
 
         self._bless_server: Any = None
         self._winrt_provider: Any = None
@@ -130,6 +140,37 @@ class WindowsBleTransport:
 
     def set_node_id(self, node_id_hex: str) -> None:
         self._node_id_hex = node_id_hex.lower()
+
+    async def set_blocked_tags(self, tags: Iterable[str]) -> None:
+        self._blocked_tags = {
+            t.strip().lower() for t in tags if t and t.strip()
+        }
+        if self._blocked_tags:
+            await self._drop_blocked_links()
+
+    async def register_peer_link_tag(self, link_handle: str, short_tag: str) -> None:
+        clean = short_tag.strip().lower()
+        if not clean:
+            return
+        self._tag_by_handle[link_handle] = clean
+        if link_handle.startswith("ble-c:"):
+            self._tag_by_addr[link_handle[6:]] = clean
+        if clean in self._blocked_tags:
+            await self._drop_blocked_links()
+
+    def _is_blocked_peer(self, handle: str, addr: str | None = None) -> bool:
+        tag = self._tag_by_handle.get(handle)
+        if tag is None and addr is not None:
+            tag = self._tag_by_addr.get(addr)
+        return is_peer_blocked(tag, self._blocked_tags)
+
+    async def _drop_blocked_links(self) -> None:
+        for handle, c_link in list(self._central_links.items()):
+            if self._is_blocked_peer(handle, c_link.address):
+                await self._drop_central_link(handle, c_link)
+        for handle in list(self._peripheral_links):
+            if self._is_blocked_peer(handle):
+                await self.disconnect_link(handle)
 
     def set_callbacks(
         self,
@@ -347,6 +388,13 @@ class WindowsBleTransport:
             return
 
         remote_label = _extract_service_data_label(adv) or adv.local_name or device.name
+        remote_tag = parse_linkchat_tag(remote_label)
+        if remote_tag is not None:
+            self._tag_by_addr[addr] = remote_tag
+            self._tag_by_handle[f"ble-c:{addr}"] = remote_tag
+            self._tag_by_handle[f"ble-p:{addr}"] = remote_tag
+        if self._is_blocked_peer(f"ble-c:{addr}", addr):
+            return
         if not self.should_initiate_central(remote_label):
             return
 
@@ -369,7 +417,11 @@ class WindowsBleTransport:
         client = self._client_factory(device, disconnected_callback=_on_disconnect)
         try:
             await client.connect()
-            if not self._started or not getattr(client, "is_connected", True):
+            if (
+                not self._started
+                or not getattr(client, "is_connected", True)
+                or self._is_blocked_peer(handle, addr)
+            ):
                 with contextlib.suppress(Exception):
                     await client.disconnect()
                 return
@@ -481,6 +533,8 @@ class WindowsBleTransport:
         return True
 
     async def _handle_bless_write(self, handle: str, peer_id: str, data: bytes) -> None:
+        if self._is_blocked_peer(handle):
+            return
         if handle not in self._peripheral_links:
             self._peripheral_links[handle] = _PeripheralLink(
                 handle=handle, device_id=peer_id, mtu=DEFAULT_MTU
@@ -561,6 +615,10 @@ class WindowsBleTransport:
                         if req.option == GattWriteOption.WRITE_WITH_RESPONSE:
                             req.respond()
                         handle = f"ble-p:{session_id}"
+                        if self._is_blocked_peer(handle):
+                            with contextlib.suppress(Exception):
+                                args.session.close()
+                            return
                         if handle not in self._peripheral_links:
                             mtu = max(DEFAULT_MTU, min(max_pdu, MAX_WIN_MTU))
                             self._peripheral_links[handle] = _PeripheralLink(
@@ -636,6 +694,12 @@ class WindowsBleTransport:
 
         # Handle new subscriptions
         for handle, sub in current.items():
+            if self._is_blocked_peer(handle):
+                with contextlib.suppress(Exception):
+                    sub.session.close()
+                if handle in self._peripheral_links:
+                    await self._handle_peripheral_disconnect(handle)
+                continue
             if handle not in self._peripheral_links:
                 max_pdu = int(
                     getattr(sub.session, "max_pdu_size", 0)
