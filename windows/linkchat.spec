@@ -19,6 +19,8 @@ hiddenimports = [
     "linkchat_win",
     "linkchat_win.app",
     "linkchat_win.ble_transport",
+    "linkchat_win.i18n",
+    "linkchat_win.prefs",
     "linkchat_win.ui",
     "linkchat_win.ui.main_window",
     "linkchat_win.ui.theme",
