@@ -36,8 +36,6 @@ class NodeReadyEvent:
     node_id_hex: str
     short_tag: str
     nickname: str
-    mode_label: str
-    central_only: bool
     initial_peers: list[PeerInfo]
     public_history: list[MessageRecord]
 
@@ -47,14 +45,6 @@ class NodeResetEvent:
     node_id_hex: str
     short_tag: str
     nickname: str
-    mode_label: str
-    central_only: bool
-
-
-@dataclass(frozen=True, slots=True)
-class ModeChangedEvent:
-    central_only: bool
-    mode_label: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,12 +99,10 @@ class BackendBridge:
         data_dir: str | Path | None = None,
         nickname: str | None = None,
         *,
-        force_central_only: bool = False,
         transport_factory: Callable[[], Any] | None = None,
     ) -> None:
         self.data_dir = Path(data_dir) if data_dir is not None else default_data_dir()
         self.nickname = nickname
-        self.force_central_only = force_central_only
         self._transport_factory = transport_factory
 
         self.events: queue.Queue[Any] = queue.Queue()
@@ -165,17 +153,10 @@ class BackendBridge:
     async def _async_main(self) -> None:
         self._stop_event = asyncio.Event()
 
-        def _on_mode_changed(central_only: bool) -> None:
-            label = "Central-Only" if central_only else "Dual-Role"
-            self.events.put(ModeChangedEvent(central_only=central_only, mode_label=label))
-
         if self._transport_factory is not None:
             transport = self._transport_factory()
         else:
-            transport = WindowsBleTransport(
-                force_central_only=self.force_central_only,
-                on_mode_changed=_on_mode_changed,
-            )
+            transport = WindowsBleTransport()
         self._transport = transport
 
         node = LinkChatNode(
@@ -213,17 +194,11 @@ class BackendBridge:
             await transport.set_blocked_tags(self._blocked_tags)
         await node.start()
 
-        central_only = bool(getattr(transport, "central_only", False))
-        mode_label = getattr(
-            transport, "mode_label", "Central-Only" if central_only else "Dual-Role"
-        )
         self.events.put(
             NodeReadyEvent(
                 node_id_hex=node.node_id_hex,
                 short_tag=node.short_tag,
                 nickname=node.nickname,
-                mode_label=mode_label,
-                central_only=central_only,
                 initial_peers=[replace(p) for p in node.get_peers()],
                 public_history=node.get_history("#public"),
             )
@@ -340,20 +315,11 @@ class BackendBridge:
             if transport is not None and hasattr(transport, "set_blocked_tags"):
                 await transport.set_blocked_tags(set())
             await node.reset_all()
-            transport = self._transport
-            central_only = bool(getattr(transport, "central_only", False))
-            mode_label = getattr(
-                transport,
-                "mode_label",
-                "Central-Only" if central_only else "Dual-Role",
-            )
             self.events.put(
                 NodeResetEvent(
                     node_id_hex=node.node_id_hex,
                     short_tag=node.short_tag,
                     nickname=node.nickname,
-                    mode_label=mode_label,
-                    central_only=central_only,
                 )
             )
 
@@ -374,11 +340,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
         help="Override local display nickname",
     )
-    parser.add_argument(
-        "--central-only",
-        action="store_true",
-        help="Disable BLE Peripheral GATT Server and run in Central-only mode",
-    )
     return parser.parse_args(argv)
 
 
@@ -393,7 +354,6 @@ def run_app(argv: list[str] | None = None) -> int:
     bridge = BackendBridge(
         data_dir=args.data_dir,
         nickname=args.nickname,
-        force_central_only=args.central_only,
     )
     window = MainWindow(bridge)
     bridge.start()

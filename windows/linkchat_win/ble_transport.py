@@ -175,8 +175,8 @@ class WindowsBleTransport:
         self._on_chunk = on_chunk
 
     def should_initiate_central(self, remote_local_name: str | None) -> bool:
-        """Apply deterministic node_id tie-breaker unless running Central-only."""
-        if self.central_only:
+        """Apply deterministic node_id tie-breaker when Peripheral GATT Server is active."""
+        if not self._peripheral_active:
             return True
         remote_tag = parse_linkchat_tag(remote_local_name)
         if remote_tag is None:
@@ -184,24 +184,12 @@ class WindowsBleTransport:
             return True
         return self.local_tag <= remote_tag
 
-    def _set_central_only(self, value: bool) -> None:
-        if self.central_only != value:
-            self.central_only = value
-            if self.on_mode_changed is not None:
-                self.on_mode_changed(value)
-
     async def start(self) -> None:
         if self._started:
             return
         self._started = True
         self._loop = asyncio.get_running_loop()
-        self._set_central_only(self._force_central_only)
-
-        if not self.central_only:
-            ok = await self._start_peripheral()
-            if not ok:
-                self._set_central_only(True)
-
+        self._peripheral_active = await self._start_peripheral()
         self._scan_task = asyncio.create_task(self._scanner_supervisor())
 
     async def stop(self) -> None:
@@ -350,7 +338,7 @@ class WindowsBleTransport:
                 )
                 await scanner.start()
                 self._scanner = scanner
-                logger.info("BLE Central scanner started (%s)", self.mode_label)
+                logger.info("BLE Central scanner started")
                 while self._started:
                     await asyncio.sleep(1.0)
                     await self._prune_dead_links()
@@ -738,6 +726,7 @@ class WindowsBleTransport:
                 await self._winrt_tx_char.notify_value_async(buf)
 
     async def _stop_peripheral(self) -> None:
+        self._peripheral_active = False
         for handle in list(self._peripheral_links):
             link = self._peripheral_links.get(handle)
             if link is not None and link.subscribed_client is not None:
